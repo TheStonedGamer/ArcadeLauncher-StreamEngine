@@ -183,6 +183,9 @@ jobs:
         shell: bash
         run: |
           git config --global --add safe.directory '*'
+          # Sunshine's nested docs submodule (doxygen-awesome-css) blows past
+          # Windows MAX_PATH; long paths let git write its pack/.keep files.
+          git config --global core.longpaths true
           git submodule update --init --recursive vendor/sunshine
 
       - name: Build Sunshine (MSYS2 UCRT64) + collect DLL closure + zip
@@ -224,10 +227,15 @@ jobs:
           git config --global --add safe.directory '*'
           git submodule update --init --recursive vendor/sunshine
 
+      - name: Install Node.js (NodeSource — distro nodejs/npm deps are broken)
+        run: |
+          curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+          sudo apt-get install -y nodejs
+
       - name: Install Sunshine build deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build build-essential pkg-config nodejs npm \
+          sudo apt-get install -y cmake ninja-build build-essential pkg-config \
             libssl-dev libavdevice-dev libboost-filesystem-dev libboost-locale-dev \
             libboost-log-dev libboost-program-options-dev libcap-dev libcurl4-openssl-dev \
             libdrm-dev libevdev-dev libminiupnpc-dev libnotify-dev libnuma-dev libopus-dev \
