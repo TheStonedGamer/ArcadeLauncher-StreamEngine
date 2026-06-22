@@ -12,12 +12,17 @@
 
 namespace ase::ipc {
 
+bool Server::write_locked(const std::string& payload, std::string& err) {
+  std::lock_guard<std::mutex> lock(write_mu_);
+  return write_frame(t_, payload, err);
+}
+
 bool Server::handshake(std::string& err) {
   json::Value hello = json::Value::object();
   hello.set("kind", json::Value::string(kind::kHello));
   hello.set("protocolVersion", json::Value::number(kProtocolVersion));
   hello.set("engineVersion", json::Value::string(ENGINE_VERSION));
-  if (!write_frame(t_, json::dump(hello), err)) return false;
+  if (!write_locked(json::dump(hello), err)) return false;
 
   std::string raw;
   if (!read_frame(t_, raw, err)) {
@@ -42,7 +47,7 @@ void Server::emit(const std::string& event, const json::Value& data) {
   ev.set("event", json::Value::string(event));
   ev.set("data", data);
   std::string err;
-  write_frame(t_, json::dump(ev), err);  // best-effort; events are fire-and-forget
+  write_locked(json::dump(ev), err);  // best-effort; events are fire-and-forget
 }
 
 bool Server::run(std::string& err) {
@@ -84,7 +89,7 @@ bool Server::run(std::string& err) {
       e.set("message", json::Value::string(emsg));
       res.set("error", std::move(e));
     }
-    if (!write_frame(t_, json::dump(res), err)) return false;
+    if (!write_locked(json::dump(res), err)) return false;
   }
 }
 

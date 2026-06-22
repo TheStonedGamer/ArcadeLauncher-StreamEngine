@@ -5,6 +5,7 @@
 #pragma once
 #include <functional>
 #include <map>
+#include <mutex>
 #include <string>
 
 #include "ipc/json.h"
@@ -26,15 +27,22 @@ class Server {
   // Exchange hello frames and verify the peer's protocolVersion. false + err on mismatch/EOF.
   bool handshake(std::string& err);
 
-  // Send an unsolicited event (best-effort; ignores write errors).
+  // Send an unsolicited event (best-effort; ignores write errors). Thread-safe: may be called from
+  // a worker thread (e.g. the stream session) concurrently with the run() loop's response writes.
   void emit(const std::string& event, const json::Value& data);
 
   // Read/dispatch loop until the peer closes. Returns true on clean EOF, false + err on error.
   bool run(std::string& err);
 
  private:
+  // Serializes all frame writes to the transport so emit() (worker thread) and run()'s res writes
+  // (main thread) can never interleave a frame. Reads happen only on the run() thread, so the
+  // read side needs no lock.
+  bool write_locked(const std::string& payload, std::string& err);
+
   ITransport& t_;
   std::map<std::string, Handler> handlers_;
+  std::mutex write_mu_;
 };
 
 }  // namespace ase::ipc

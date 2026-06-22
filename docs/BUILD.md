@@ -109,6 +109,21 @@ forks are vendored. Runners must have CMake ≥ 3.21.
        - **Wired up:** `client.pair {host, pin}` runs serverinfo discovery + the handshake and
          returns the pinned server cert. Remaining: client-identity + paired-cert **persistence**
          (port of `identitymanager.cpp`'s settings store) so pairings survive across sessions.
-3. Sunshine host control surface driven over IPC; `host.status`/`enable`/`syncApps`.
-4. Engine renderer (SDL2 + HW decode) → child window handle returned for reparent.
-5. Controller pass-through end-to-end (capture → control stream → ViGEm/uinput inject).
+   - **Live connection ✅ (2026-06-22):** `src/net/nv_launch.{h,cpp}` (launch/resume → `sessionUrl0`,
+     KAT-tested) + `src/client/stream_session.{h,cpp}` drive `LiStartConnection` on a worker thread.
+3. **Engine renderer ✅ (2026-06-22):** opt-in behind `-DASE_LINK_SDL=ON -DASE_LINK_FFMPEG=ON`.
+   - `src/client/stream_window.{h,cpp}` — borderless SDL2 window, native handle (HWND/X11) emitted
+     for reparent, SDL game-controller capture → `LiSendMultiControllerEvent`.
+   - `src/client/video_renderer.{h,cpp}` — FFmpeg H.264 decode with HW accel (`d3d11va` on Windows,
+     `vaapi` on Linux; software fallback), present to an SDL texture (NV12 / IYUV). Decode runs on
+     moonlight's submit thread, present on the session worker; `stream.stats` HUD feed.
+   - `src/client/audio_renderer.{h,cpp}` — Opus (`opus_multistream`) decode → SDL audio queue; opt-in
+     behind `-DASE_LINK_OPUS=ON` (rides with the renderer build, needs SDL for output).
+   - Deps: Windows via vcpkg (`sdl2`, `ffmpeg[avcodec,nvcodec]`, `opus`); Linux via apt (`libsdl2-dev`,
+     `libavcodec-dev libavutil-dev libswscale-dev libopus-dev`). Both runners provisioned 2026-06-22;
+     CI builds the full streaming engine. Without the flags the engine still builds + connects headless.
+   - ⚠️ Live A/V not yet validated against a real host (no GameStream host in CI); builds + links
+     green on both platforms (see [STREAMING_PLAN.md](STREAMING_PLAN.md) for the live bring-up plan).
+4. Sunshine host control surface driven over IPC; `host.status`/`enable`/`syncApps`.
+5. Controller pass-through end-to-end is wired on the client side (capture → control stream); host
+   inject (ViGEm/uinput) is the Sunshine-side follow-up.

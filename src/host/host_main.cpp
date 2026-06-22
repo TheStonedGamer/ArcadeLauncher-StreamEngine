@@ -1,12 +1,20 @@
 // ArcadeLauncher Stream Engine — GPL-3.0-or-later
-// Host mode: serve this PC over GameStream. Wraps the Sunshine fork (vendor/sunshine) and
-// exposes its control surface (status/enable/syncApps/listApps/pairAccept/deviceInfo) over IPC.
+// Host mode: serve this PC over GameStream by driving the bundled Sunshine fork.
 //
-// The Sunshine fork is not vendored yet, so the host.* handlers below return honest STUB data
-// over a fully working IPC server. This lets the launcher develop against a real engine wire
-// protocol now; each handler gets its real body when the fork lands (see docs/BUILD.md).
+// The engine ships the vendored fork's `sunshine[.exe]` beside itself and controls it as a managed
+// child process (see host/sunshine_backend.h for why we don't link it in-process). The app catalog
+// the host streams is the engine-managed apps.json (host/host_apps.h), which Sunshine reads.
+//
+// host.syncApps / host.listApps / host.status manage that catalog and report state regardless of
+// whether the Sunshine binary is present — so the launcher's "My PCs" + hosting UI is functional now;
+// host.enable additionally starts/stops the child, which needs the binary bundled.
 #include <cstdio>
+#include <memory>
+#include <string>
+#include <vector>
 
+#include "host/host_apps.h"
+#include "host/sunshine_backend.h"
 #include "ipc/ipc.h"
 #include "ipc/json.h"
 #include "ipc/server.h"
@@ -16,55 +24,103 @@ namespace ase {
 
 using json::Value;
 
-static void register_host_methods(ipc::Server& s) {
-  // host.status -> capability/state snapshot. Stub: nothing installed yet.
-  s.on("host.status", [](const Value&, std::string&, std::string&) {
+// Convert a launcher-supplied games array ({name,cmd,image,workingDir,...}) into HostApp records.
+static std::vector<host::HostApp> games_from_params(const Value& params) {
+  std::vector<host::HostApp> apps;
+  const Value* games = params.find("games");
+  if (!games || !games->is_array()) return apps;
+  for (const Value& g : games->arr) {
+    if (!g.is_object()) continue;
+    host::HostApp a;
+    a.name = g.get_str("name");
+    if (a.name.empty()) continue;
+    a.cmd = g.get_str("cmd");
+    a.imagePath = g.get_str("image", g.get_str("imagePath"));
+    a.workingDir = g.get_str("workingDir", g.get_str("working-dir"));
+    a.output = g.get_str("output");
+    a.elevated = g.get_bool("elevated", false);
+    a.autoDetach = g.get_bool("autoDetach", true);
+    a.waitAll = g.get_bool("waitAll", true);
+    a.exitTimeout = static_cast<int>(g.get_num("exitTimeout", 5));
+    apps.push_back(std::move(a));
+  }
+  return apps;
+}
+
+static Value app_to_json(const host::HostApp& a) {
+  Value o = Value::object();
+  o.set("name", Value::string(a.name));
+  o.set("cmd", Value::string(a.cmd));
+  o.set("imagePath", Value::string(a.imagePath));
+  return o;
+}
+
+static void register_host_methods(ipc::Server& s, std::shared_ptr<host::SunshineBackend> backend) {
+  // host.status -> capability/state snapshot. `installed` = the bundled Sunshine binary is present;
+  // `running` = our managed child is up; `configured` = an apps catalog exists; `appsCount` from it.
+  s.on("host.status", [backend](const Value&, std::string&, std::string&) {
+    const auto apps = host::read_apps(backend->apps_path());
     Value r = Value::object();
-    r.set("installed", Value::boolean(false));
-    r.set("running", Value::boolean(false));
-    r.set("configured", Value::boolean(false));
+    r.set("installed", Value::boolean(backend->bundled()));
+    r.set("running", Value::boolean(backend->running()));
+    r.set("configured", Value::boolean(!apps.empty()));
     r.set("gpuCapable", Value::boolean(true));
-    r.set("appsCount", Value::number(0));
+    r.set("appsCount", Value::number(static_cast<double>(apps.size())));
     return r;
   });
 
-  // host.enable {on} -> start/stop hosting. Stub: cannot actually enable without the fork.
-  s.on("host.enable", [](const Value& params, std::string& code, std::string& msg) {
+  // host.enable {on} -> start/stop the bundled Sunshine child.
+  s.on("host.enable", [backend](const Value& params, std::string& code, std::string& msg) {
     const bool on = params.get_bool("on", false);
-    if (on) {
-      code = "not_installed";
-      msg = "host backend (Sunshine fork) not vendored yet";
+    bool ok = on ? backend->start(msg) : backend->stop(msg);
+    if (!ok) {
+      code = backend->bundled() ? "internal" : "not_installed";
       return Value::null();
     }
     Value r = Value::object();
-    r.set("running", Value::boolean(false));
+    r.set("running", Value::boolean(backend->running()));
     return r;
   });
 
-  // host.syncApps {games:[...]} -> diff library vs registered apps. Stub: no-op diff.
-  s.on("host.syncApps", [](const Value&, std::string&, std::string&) {
+  // host.syncApps {games:[...]} -> publish the launcher's library into the host apps catalog; report
+  // the diff vs what was registered before. Writes the apps.json the bundled Sunshine reads.
+  s.on("host.syncApps", [backend](const Value& params, std::string& code, std::string& msg) {
+    const auto prev = host::read_apps(backend->apps_path());
+    const auto next = games_from_params(params);
+    const host::SyncDiff d = host::diff_apps(prev, next);
+    if (!host::write_apps(backend->apps_path(), next)) {
+      code = "internal";
+      msg = "could not write apps catalog at " + backend->apps_path();
+      return Value::null();
+    }
     Value r = Value::object();
-    r.set("added", Value::number(0));
-    r.set("removed", Value::number(0));
-    r.set("updated", Value::number(0));
+    r.set("added", Value::number(d.added));
+    r.set("removed", Value::number(d.removed));
+    r.set("updated", Value::number(d.updated));
+    r.set("total", Value::number(static_cast<double>(next.size())));
     return r;
   });
 
   // host.listApps -> the host's registered/streamable games (powers the "My PCs" tab, T12k-9).
-  s.on("host.listApps", [](const Value&, std::string&, std::string&) {
+  s.on("host.listApps", [backend](const Value&, std::string&, std::string&) {
+    const auto apps = host::read_apps(backend->apps_path());
+    Value arr = Value::array();
+    for (const auto& a : apps) arr.push(app_to_json(a));
     Value r = Value::object();
-    r.set("apps", Value::array());
+    r.set("apps", std::move(arr));
     return r;
   });
 
-  // host.pairAccept {pin} -> accept an inbound pairing PIN. Stub: cannot pair without the fork.
+  // host.pairAccept {pin} -> accept an inbound pairing PIN. Sunshine's PIN pairing is confirmed via
+  // its own web UI / pin endpoint; the engine does not own that flow yet.
   s.on("host.pairAccept", [](const Value&, std::string& code, std::string& msg) {
-    code = "not_installed";
-    msg = "host pairing requires the Sunshine fork (not vendored yet)";
+    code = "unsupported";
+    msg = "host PIN pairing is handled by Sunshine's own web UI; engine-side accept not wired yet";
     return Value::null();
   });
 
-  // host.deviceInfo -> identity for gateway registration (T12k-7/8). Stub: empty fields.
+  // host.deviceInfo -> identity for gateway registration (T12k-7/8). Cert fingerprint comes from the
+  // running Sunshine's credentials; not surfaced over the engine yet.
   s.on("host.deviceInfo", [](const Value&, std::string&, std::string&) {
     Value r = Value::object();
     r.set("deviceId", Value::string(""));
@@ -92,14 +148,18 @@ int host_main(int argc, char** argv) {
   }
 
   ipc::Server server(*transport);
-  register_host_methods(server);
+  auto backend = std::make_shared<host::SunshineBackend>();
+  register_host_methods(server, backend);
 
   if (!server.handshake(err)) {
     std::fprintf(stderr, "[host] handshake failed: %s\n", err.c_str());
     return 70;  // EX_SOFTWARE
   }
-  std::fprintf(stderr, "[host] connected (IPC protocol v%d); serving host.* (stub backend).\n",
-               ase::ipc::protocol_version());
+  std::fprintf(stderr,
+               "[host] connected (IPC protocol v%d); serving host.* (sunshine %s, apps %s).\n",
+               ase::ipc::protocol_version(),
+               backend->bundled() ? backend->binary_path().c_str() : "not bundled",
+               backend->apps_path().c_str());
   if (!server.run(err)) {
     std::fprintf(stderr, "[host] ipc error: %s\n", err.c_str());
     return 70;

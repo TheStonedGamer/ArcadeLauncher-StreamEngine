@@ -39,11 +39,18 @@ jobs:
           $vs = & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products '*' -property installationPath
           "$vs\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
-      - name: Configure (full build — moonlight + OpenSSL)
+      - name: Ensure renderer deps (SDL2 + FFmpeg + Opus via vcpkg)
+        shell: powershell
+        run: C:\vcpkg\vcpkg.exe install sdl2:x64-windows "ffmpeg[avcodec,nvcodec]:x64-windows" opus:x64-windows
+
+      - name: Configure (full build — moonlight + OpenSSL + SDL2 + FFmpeg + Opus)
         shell: powershell
         run: >
           cmake -S . -B build -G "Visual Studio 17 2022" -A x64
           -DASE_LINK_MOONLIGHT=ON
+          -DASE_LINK_SDL=ON
+          -DASE_LINK_FFMPEG=ON
+          -DASE_LINK_OPUS=ON
           -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
           -DVCPKG_TARGET_TRIPLET=x64-windows
       - name: Build
@@ -82,13 +89,20 @@ jobs:
             - Qt-free **GameStream pairing** (NvHTTP port from moonlight-qt): XML/hex parsing,
               AES/SHA/RSA pairing crypto on OpenSSL, a TLS client with client-cert + pinned
               server-cert, and the 5-stage `pair()` handshake — wired to the `client.pair` IPC method.
+            - Persistent **client identity + paired-host store** (cert/key/uniqueid reused across runs).
+            - Live **streaming** (`client.start`): launch/resume handshake → `LiStartConnection` with an
+              FFmpeg HW-decode (`d3d11va`/`vaapi`) renderer into a borderless SDL2 window, **Opus audio**
+              decode to SDL output, gamepad capture, and `stream.state` / `stream.stats` events.
             - Launcher↔engine **IPC server** (length-prefixed JSON over a named pipe; see `docs/IPC.md`).
-            - Single Qt-free binary linking **moonlight-common-c** + **OpenSSL**.
+            - Single Qt-free binary linking **moonlight-common-c** + **OpenSSL** + **SDL2** + **FFmpeg**
+              + **Opus**.
 
-            **Asset:** `arcade-stream-engine.exe` + its OpenSSL DLLs (Windows x64), built and tested on CI.
+            **Asset:** `arcade-stream-engine.exe` + its DLLs (OpenSSL, SDL2, FFmpeg, Opus; Windows x64),
+            built and tested on CI.
 
-            **Not yet wired:** live streaming (`client.start`), the Sunshine host control surface, and
-            client identity/paired-cert persistence — tracked for follow-up releases.
+            **Not yet validated live:** end-to-end A/V against a real host (needs a GameStream/Sunshine
+            host + GPU client). **Not yet wired:** the Sunshine host control surface and app name→id
+            resolution — tracked for follow-up releases.
 
   release-linux:
     # Serialized after the Windows leg so the release already exists; this leg only
@@ -109,10 +123,13 @@ jobs:
       - name: Install build deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build build-essential pkg-config libssl-dev
+          sudo apt-get install -y cmake ninja-build build-essential pkg-config libssl-dev \
+            libsdl2-dev libavcodec-dev libavutil-dev libswscale-dev libva-dev libopus-dev
 
-      - name: Configure (full build — moonlight + system OpenSSL)
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DASE_LINK_MOONLIGHT=ON
+      - name: Configure (full build — moonlight + system OpenSSL + SDL2 + FFmpeg + Opus)
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DASE_LINK_MOONLIGHT=ON -DASE_LINK_SDL=ON -DASE_LINK_FFMPEG=ON -DASE_LINK_OPUS=ON
       - name: Build
         run: cmake --build build
       - name: "Unit tests (IPC, crypto, pairing)"
