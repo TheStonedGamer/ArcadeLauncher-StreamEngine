@@ -63,8 +63,19 @@ forks are vendored. Runners must have CMake ≥ 3.21.
    + req/res/event dispatch (`src/ipc/`), with host.*/client.* stub handlers wired in both
    modes. Covered by `ase_tests` (CTest) over an in-memory transport, plus a real named-pipe
    round-trip via `scripts/ipc_smoke.ps1`. The launcher can develop against this wire now.
-1. **Forks build standalone** on each runner (deps proven). ← step 2
+1. **Forks build standalone** on each runner (deps proven).
+   - **Client core ✅ (2026-06-22):** `moonlight-common-c` builds standalone on the Windows
+     runner via `scripts/build_moonlight_standalone.ps1` — sole external dep is **OpenSSL**
+     (vcpkg `openssl:x64-windows`, 3.6.3); `enet`/`nanors` are bundled. Verified with VS 2022
+     + CMake 3.31.
+   - Host (Sunshine) standalone build still pending — heavier deps (Boost, FFmpeg, NVENC/AMF,
+     ViGEm); next runner-prep task.
 2. `moonlight-common-c` links into the engine; `client.start` opens a connection.
+   - **Link wiring ✅ (2026-06-22):** `-DASE_LINK_MOONLIGHT=ON` (with the vcpkg toolchain)
+     builds `arcade-stream-engine.exe` with the fork embedded **statically** and `ase_tests`
+     green. NOTE: moonlight-common-c defaults to a DLL; the engine forces `BUILD_SHARED_LIBS
+     OFF` for that subdir so MSVC gets a linkable static lib (a no-export DLL emits no import
+     `.lib` → LNK1181). `client.start` connection impl still TODO.
 3. Sunshine host control surface driven over IPC; `host.status`/`enable`/`syncApps`.
 4. Engine renderer (SDL2 + HW decode) → child window handle returned for reparent.
 5. Controller pass-through end-to-end (capture → control stream → ViGEm/uinput inject).

@@ -61,7 +61,14 @@ if(ASE_BUILD_CLIENT AND ASE_LINK_MOONLIGHT)
   if(NOT EXISTS "${ASE_MOONLIGHT_COMMON_C}/CMakeLists.txt")
     message(FATAL_ERROR "ASE_LINK_MOONLIGHT=ON but ${ASE_MOONLIGHT_COMMON_C} is missing — run scripts/vendor.sh")
   endif()
+  # moonlight-common-c defaults to BUILD_SHARED_LIBS=ON (a DLL). On MSVC a DLL that exports
+  # no symbols emits no import .lib, so linking it fails (LNK1181). We embed it into the single
+  # engine binary, so force a STATIC build for the subdirectory, then restore the prior value.
+  # Its CMakeLists only honors BUILD_SHARED_LIBS when it is already defined.
+  set(_ASE_SAVED_BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS}")
+  set(BUILD_SHARED_LIBS OFF)
   add_subdirectory(${ASE_MOONLIGHT_COMMON_C} moonlight-common-c EXCLUDE_FROM_ALL)
+  set(BUILD_SHARED_LIBS "${_ASE_SAVED_BUILD_SHARED_LIBS}")
   target_link_libraries(arcade-stream-engine PRIVATE moonlight-common-c)
   target_compile_definitions(arcade-stream-engine PRIVATE ASE_HAVE_MOONLIGHT=1)
 endif()
