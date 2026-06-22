@@ -10,8 +10,9 @@ off as they land. See [docs/BUILD.md](BUILD.md) milestones and the in-repo memor
 - ✅ Audio: **Opus → SDL** decode wired (Phase 1 done 2026-06-22); 7/7 ctest both platforms.
 - ⚠️ Live A/V **never run against a real host** — build/link/test is the ceiling without one.
 - ✅ `app` accepts a numeric appid **or** an app name (name→id via `applist`); `client.apps` lists them.
-- ⚠️ No Sunshine host control surface (`host.status`/`enable`/`syncApps`).
-- ⚠️ All renderer work uncommitted/unpushed (per "don't push until told").
+- ✅ Sunshine host control surface backend landed (`host.status`/`enable`/`syncApps`/`listApps`).
+- ✅ **Released as v0.2.0** (2026-06-22) — first streaming-capable build; CI green both OSes, win+linux
+  assets published. **Bundled into ArcadeLauncher v0.12.0**, which drives it via `client.start`.
 
 ## Phase 1 — Audio (Opus → SDL out)   ✅ DONE 2026-06-22
 Make the stream not silent. Mirror the `video_renderer` pattern.
@@ -64,10 +65,12 @@ fork's `sunshine[.exe]` as a managed child process (portable, single-toolchain-a
       `host.enable {on:true}`, confirm a client can pair + stream from it. **Needs you** (GPU host).
 - [ ] Source `host.deviceInfo`/`host.pairAccept` from the running Sunshine (cert fingerprint, PIN).
 
-## Phase 5 — Commit + (eventually) push
-- [ ] Commit the renderer + audio work in coherent chunks once Phase 1–2 are green.
-- [ ] Push only on explicit go-ahead; then CI builds the full streaming engine on both runners.
+## Phase 5 — Commit + push + release   ✅ DONE 2026-06-22
+- [x] Committed the renderer + audio + host-control work in coherent chunks.
+- [x] Pushed; CI built the full streaming engine on both runners.
+- [x] Tagged **v0.2.0** → release CI published win-x64 + linux-x64 assets. Bundled into the launcher.
 
 ---
-**Done:** Phase 1 (audio) + Phase 2 (app name→id) + Phase 4 backend (Sunshine host control surface).
+**Done:** Phase 1 (audio) + Phase 2 (app name→id) + Phase 4 backend (Sunshine host control surface)
++ Phase 5 (commit/push/**release v0.2.0**, bundled in launcher v0.12.0).
 **Blocked on user:** Phase 3 (live A/V test) + Phase 4 live host bring-up — both need a GPU host.
