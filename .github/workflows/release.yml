@@ -188,25 +188,32 @@ jobs:
           git config --global core.longpaths true
           git submodule update --init --recursive vendor/sunshine
 
-      - name: Build Sunshine (MSYS2 UCRT64) + collect DLL closure + zip
-        shell: cmd
+      - name: Set up MSYS2 (UCRT64) + toolchain
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: zip
+          pacboy: >-
+            toolchain:u cmake:u ninja:u boost:u cppwinrt:u curl-winssl:u
+            miniupnpc:u onevpl:u openssl:u opus:u MinHook:u nodejs:u nsis:u
+            ntldd-git:u
+
+      - name: Build Sunshine (UCRT64) + collect DLL closure + zip
+        shell: msys2 {0}
         run: |
-          set MSYSTEM=UCRT64
-          set CHERE_INVOKING=1
-          C:\msys64\usr\bin\bash.exe -lc "set -euo pipefail; \
-            ver=$(tr -d ' \t\r\n' < VERSION); \
-            name=ArcadeLauncher-Sunshine-$ver-win-x64; \
-            pacman -Sy --noconfirm; \
-            pacman -S --needed --noconfirm zip mingw-w64-ucrt-x86_64-toolchain mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-boost mingw-w64-ucrt-x86_64-cppwinrt mingw-w64-ucrt-x86_64-curl-winssl mingw-w64-ucrt-x86_64-miniupnpc mingw-w64-ucrt-x86_64-onevpl mingw-w64-ucrt-x86_64-openssl mingw-w64-ucrt-x86_64-opus mingw-w64-ucrt-x86_64-MinHook mingw-w64-ucrt-x86_64-nodejs mingw-w64-ucrt-x86_64-nsis mingw-w64-ucrt-x86_64-ntldd-git; \
-            cmake -B build/sunshine -G Ninja -S vendor/sunshine -DCMAKE_BUILD_TYPE=Release -DBUILD_DOCS=OFF; \
-            cmake --build build/sunshine; \
-            exe=$(find build/sunshine -name sunshine.exe | head -1); \
-            test -n \"$exe\"; \
-            mkdir -p \"$name\"; cp \"$exe\" \"$name/\"; \
-            ntldd -R \"$exe\" | grep -oiE '/ucrt64/bin/[^ ]+\\.dll' | sort -u | while read -r d; do cp \"$d\" \"$name/\" 2>/dev/null || true; done; \
-            cp LICENSE README.md \"$name/\" 2>/dev/null || true; \
-            (cd \"$name\" && zip -r \"../$name.zip\" .); \
-            ls -la \"$name.zip\""
+          set -euo pipefail
+          ver=$(tr -d ' \t\r\n' < VERSION)
+          name=ArcadeLauncher-Sunshine-$ver-win-x64
+          cmake -B build/sunshine -G Ninja -S vendor/sunshine -DCMAKE_BUILD_TYPE=Release -DBUILD_DOCS=OFF -DSUNSHINE_ENABLE_TRAY=OFF
+          cmake --build build/sunshine
+          exe=$(find build/sunshine -name sunshine.exe | head -1)
+          test -n "$exe"
+          mkdir -p "$name"; cp "$exe" "$name/"
+          ntldd -R "$exe" | grep -oiE '/ucrt64/bin/[^ ]+\.dll' | sort -u | while read -r d; do cp "$d" "$name/" 2>/dev/null || true; done
+          cp LICENSE README.md "$name/" 2>/dev/null || true
+          (cd "$name" && zip -r "../$name.zip" .)
+          ls -la "$name.zip"
 
       - name: Publish Sunshine host asset
         uses: softprops/action-gh-release@v2
@@ -249,7 +256,7 @@ jobs:
           set -euo pipefail
           ver=$(tr -d ' \t\r\n' < VERSION)
           name="ArcadeLauncher-Sunshine-$ver-linux-x64"
-          cmake -B build/sunshine -G Ninja -S vendor/sunshine -DCMAKE_BUILD_TYPE=Release -DBUILD_DOCS=OFF
+          cmake -B build/sunshine -G Ninja -S vendor/sunshine -DCMAKE_BUILD_TYPE=Release -DBUILD_DOCS=OFF -DSUNSHINE_ENABLE_TRAY=OFF
           cmake --build build/sunshine
           exe=$(find build/sunshine -name sunshine -type f | head -1)
           test -n "$exe"
