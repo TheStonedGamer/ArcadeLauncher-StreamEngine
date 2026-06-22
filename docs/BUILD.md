@@ -68,8 +68,14 @@ forks are vendored. Runners must have CMake ≥ 3.21.
      runner via `scripts/build_moonlight_standalone.ps1` — sole external dep is **OpenSSL**
      (vcpkg `openssl:x64-windows`, 3.6.3); `enet`/`nanors` are bundled. Verified with VS 2022
      + CMake 3.31.
-   - Host (Sunshine) standalone build still pending — heavier deps (Boost, FFmpeg, NVENC/AMF,
-     ViGEm); next runner-prep task.
+   - **Host (Sunshine) ✅ (2026-06-22):** Sunshine builds standalone under **MSYS2 UCRT64**
+     via `scripts/build_sunshine_standalone.sh` → `sunshine.exe` (348/348 targets incl. tests).
+     Deps proven: gcc 16 (UCRT64), Boost, OpenSSL, Opus, oneVPL (`libvpl`), miniupnpc, cppwinrt,
+     MinHook, nodejs (web UI), nsis; FFmpeg is auto-downloaded prebuilt by Sunshine's CMake.
+     Build with `-DBUILD_DOCS=OFF` (skips the Doxygen+graphviz doc dep — irrelevant to the host
+     backend). NOTE: must be the **UCRT64** shell, not MSVC/vcpkg — Sunshine is MinGW-only on
+     Windows. If a prior `pacman` was interrupted, `scripts/repair_msys_cmake.sh` fixes a
+     half-installed cmake (missing Modules / corrupt local DB `desc`).
 2. `moonlight-common-c` links into the engine; `client.start` opens a connection.
    - **Link wiring ✅ (2026-06-22):** `-DASE_LINK_MOONLIGHT=ON` (with the vcpkg toolchain)
      builds `arcade-stream-engine.exe` with the fork embedded **statically** and `ase_tests`
