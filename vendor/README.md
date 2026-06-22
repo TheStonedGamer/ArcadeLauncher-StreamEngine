@@ -9,7 +9,10 @@ and reproducible builds.
 | `vendor/sunshine`  | `LizardByte/Sunshine`              | host mode (capture/encode/server/pairing/gamepad inject) |
 | `vendor/moonlight` | `moonlight-stream/moonlight-qt`    | client mode (connect/decode/render/controller capture)   |
 
-`moonlight-common-c` comes in transitively as a submodule **of** `moonlight-qt`.
+`moonlight-common-c` comes in transitively as a submodule **of** `moonlight-qt` (at
+`vendor/moonlight/app/moonlight-common-c`). The engine links **that CMake lib** for client
+mode — it does **not** build the full qmake-based `moonlight-qt` app (see `docs/BUILD.md`).
+Recursive submodule init is therefore required.
 
 ## One-time setup
 

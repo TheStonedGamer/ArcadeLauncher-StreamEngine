@@ -1,0 +1,75 @@
+name: Build
+
+# Builds the engine on the same self-hosted runners as the launcher:
+#   * Windows  → [self-hosted, Windows, X64, arcade-win10]  (VM 111, MSVC + VS Build Tools)
+#   * Linux    → [self-hosted, prox-pve]                    (CT 130 arcade-gh-runner, Debian)
+# Runner requirement: CMake >= 3.21 available (VS ships one; on Linux apt installs it).
+#
+# TODAY this builds the CLI/IPC skeleton (no external deps). As the Sunshine/Moonlight
+# forks are vendored under vendor/ (git submodules), uncomment their dep-install steps
+# below and the add_subdirectory wiring in CMakeLists.txt. See docs/BUILD.md.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    runs-on: [self-hosted, Windows, X64, arcade-win10]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive   # pulls the forks once they exist; no-op until then
+
+      - name: Set up MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      # --- Fork build deps (uncomment as the forks are vendored) ------------------
+      # - name: Install host (Sunshine) deps
+      #   run: choco install -y ...   # boost, openssl, etc. — see docs/BUILD.md
+      # - name: Install client (Moonlight) deps
+      #   run: choco install -y ...   # ffmpeg, SDL2 — see docs/BUILD.md
+
+      - name: Configure
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Smoke test (CLI dispatch)
+        shell: bash
+        run: |
+          ./build/Release/arcade-stream-engine.exe --version
+          ./build/Release/arcade-stream-engine.exe --help
+
+  build-linux:
+    runs-on: [self-hosted, prox-pve]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install base build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build build-essential pkg-config
+
+      # --- Fork build deps (uncomment as the forks are vendored) ------------------
+      # - name: Install host (Sunshine) deps
+      #   run: sudo apt-get install -y ...   # see docs/BUILD.md
+      # - name: Install client (Moonlight) deps
+      #   run: sudo apt-get install -y libavcodec-dev libsdl2-dev ...   # see docs/BUILD.md
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build
+      - name: Smoke test (CLI dispatch)
+        run: |
+          ./build/arcade-stream-engine --version
+          ./build/arcade-stream-engine --help

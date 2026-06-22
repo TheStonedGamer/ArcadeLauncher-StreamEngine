@@ -31,14 +31,22 @@ target_compile_definitions(arcade-stream-engine PRIVATE
   ASE_IPC_PROTOCOL_VERSION=1
 )
 
-# --- Fork integration (wired during build bring-up; see docs/ARCHITECTURE.md) ---------------
+# --- Fork integration (wired during build bring-up; see docs/BUILD.md) ----------------------
+# Client mode links moonlight-common-c (the CMake GameStream client core); the full qmake-based
+# moonlight-qt app is NOT used — the engine owns its renderer/input (SDL2 + HW decode).
+set(ASE_MOONLIGHT_COMMON_C "${CMAKE_CURRENT_SOURCE_DIR}/vendor/moonlight/app/moonlight-common-c")
+if(ASE_BUILD_CLIENT AND EXISTS "${ASE_MOONLIGHT_COMMON_C}/CMakeLists.txt")
+  add_subdirectory(${ASE_MOONLIGHT_COMMON_C} moonlight-common-c EXCLUDE_FROM_ALL)
+  target_link_libraries(arcade-stream-engine PRIVATE moonlight-common-c)
+  target_compile_definitions(arcade-stream-engine PRIVATE ASE_HAVE_MOONLIGHT=1)
+endif()
+
+# Host mode: first milestone is building the Sunshine fork standalone (prove deps), then
+# carving out the host control surface. Link target name confirmed during that step.
 # if(ASE_BUILD_HOST AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vendor/sunshine/CMakeLists.txt")
 #   add_subdirectory(vendor/sunshine EXCLUDE_FROM_ALL)
-#   target_link_libraries(arcade-stream-engine PRIVATE sunshine-core)   # name TBD
-# endif()
-# if(ASE_BUILD_CLIENT AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vendor/moonlight/.../moonlight-common-c")
-#   add_subdirectory(vendor/moonlight/.../moonlight-common-c EXCLUDE_FROM_ALL)
-#   target_link_libraries(arcade-stream-engine PRIVATE moonlight-common-c)
+#   target_link_libraries(arcade-stream-engine PRIVATE <sunshine-host-lib>)
+#   target_compile_definitions(arcade-stream-engine PRIVATE ASE_HAVE_SUNSHINE=1)
 # endif()
 
 install(TARGETS arcade-stream-engine RUNTIME DESTINATION bin)
