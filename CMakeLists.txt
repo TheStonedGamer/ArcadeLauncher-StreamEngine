@@ -75,6 +75,18 @@ if(ASE_BUILD_CLIENT AND ASE_LINK_MOONLIGHT)
   target_compile_definitions(arcade-stream-engine PRIVATE ASE_HAVE_MOONLIGHT=1)
 endif()
 
+# GameStream pairing crypto (NvHTTP port) needs OpenSSL. moonlight-common-c links OpenSSL
+# PRIVATEly, so its headers/libs do NOT propagate to us — we find_package it ourselves. Default it
+# ON whenever moonlight is linked (pairing only matters in a client build that has the streaming
+# core), but allow forcing it on alone to build/test the crypto against a standalone OpenSSL.
+option(ASE_WITH_OPENSSL "Build the GameStream pairing crypto (needs OpenSSL)" ${ASE_LINK_MOONLIGHT})
+if(ASE_WITH_OPENSSL)
+  find_package(OpenSSL REQUIRED)
+  target_sources(arcade-stream-engine PRIVATE src/net/pairing_crypto.cpp)
+  target_link_libraries(arcade-stream-engine PRIVATE OpenSSL::Crypto)
+  target_compile_definitions(arcade-stream-engine PRIVATE ASE_HAVE_OPENSSL=1)
+endif()
+
 # Host mode: first milestone is building the Sunshine fork standalone (prove deps), then
 # carving out the host control surface. Link target name confirmed during that step.
 option(ASE_LINK_SUNSHINE "Link the vendored Sunshine host backend (needs its build deps)" OFF)
@@ -120,4 +132,15 @@ if(ASE_BUILD_TESTS)
   )
   target_include_directories(ase_net_tests PRIVATE src)
   add_test(NAME ase_net_tests COMMAND ase_net_tests)
+
+  # GameStream pairing crypto (NvHTTP port) — needs OpenSSL, so only in the ASE_WITH_OPENSSL build.
+  if(ASE_WITH_OPENSSL)
+    add_executable(ase_crypto_tests
+      tests/test_pairing_crypto.cpp
+      src/net/pairing_crypto.cpp
+    )
+    target_include_directories(ase_crypto_tests PRIVATE src)
+    target_link_libraries(ase_crypto_tests PRIVATE OpenSSL::Crypto)
+    add_test(NAME ase_crypto_tests COMMAND ase_crypto_tests)
+  endif()
 endif()

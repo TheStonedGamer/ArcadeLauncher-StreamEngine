@@ -91,9 +91,15 @@ forks are vendored. Runners must have CMake ≥ 3.21.
      TLS client → pairing state machine.
        - **Parse layer ✅:** `src/net/gamestream_xml.{h,cpp}` (Qt-free port of NvHTTP's
          `getXmlString`/`getXmlStringFromHex`/status) + hex helpers; `ase_net_tests`.
-       - Next: pairing crypto (AES-128-ECB, SHA-256/1, cert-sig extract, RSA sign/verify — port of
-         `nvpairingmanager.cpp`, OpenSSL, gated on `ASE_LINK_MOONLIGHT`), then a TLS HTTP client
-         (client-cert + pinned server-cert), then the 5-stage `pair()` state machine.
+       - **Crypto layer ✅:** `src/net/pairing_crypto.{h,cpp}` (Qt-free port of
+         `nvpairingmanager.cpp` crypto: AES-128-ECB no-pad, SHA-256/1, `derive_aes_key`
+         salt+PIN→key, X509 signature extract, RSA sign/`EVP_DigestVerify`). OpenSSL-only, so it
+         is gated behind a new `ASE_WITH_OPENSSL` option (auto-ON with `ASE_LINK_MOONLIGHT`; can be
+         forced on alone against a standalone OpenSSL). KAT-tested (FIPS-180 SHA, FIPS-197 AES) +
+         runtime-keypair sign/verify in `ase_crypto_tests`.
+       - Next: a TLS HTTP client (client-cert + pinned server-cert, replacing Qt's
+         `openConnectionToString`), then the 5-stage `pair()` state machine (which also needs a
+         client identity/cert generator — port of `identitymanager.cpp`).
 3. Sunshine host control surface driven over IPC; `host.status`/`enable`/`syncApps`.
 4. Engine renderer (SDL2 + HW decode) → child window handle returned for reparent.
 5. Controller pass-through end-to-end (capture → control stream → ViGEm/uinput inject).
