@@ -4,14 +4,21 @@
 // (hosts/apps/pair/start/stop) over IPC. Renders into a borderless child window whose native
 // handle is returned to the launcher for reparenting.
 //
-// The Moonlight fork is not vendored yet, so the client.* handlers below return honest STUB
-// data over a fully working IPC server (see docs/BUILD.md).
+// The Moonlight fork (moonlight-common-c) is now vendored and, when built with
+// ASE_LINK_MOONLIGHT=ON, linked into this binary (ASE_HAVE_MOONLIGHT). Pairing and the live
+// connection path are still being implemented; until then the client.* handlers validate input
+// and return honest errors over a fully working IPC server (see docs/BUILD.md milestone 3).
 #include <cstdio>
 
+#include "client/stream_config.h"
 #include "ipc/ipc.h"
 #include "ipc/json.h"
 #include "ipc/server.h"
 #include "ipc/transport.h"
+
+#ifdef ASE_HAVE_MOONLIGHT
+#include <Limelight.h>
+#endif
 
 namespace ase {
 
@@ -39,10 +46,18 @@ static void register_client_methods(ipc::Server& s) {
     return Value::null();
   });
 
-  // client.start {host, app, settings, embedWindow?} -> begin streaming. Stub: not paired.
-  s.on("client.start", [](const Value&, std::string& code, std::string& msg) {
+  // client.start {host, app, settings, embedWindow?} -> begin streaming. The engine first
+  // validates/normalizes `settings` (fails fast with bad_params), then would open the moonlight
+  // connection. Pairing/connect isn't implemented yet, so a well-formed request still returns
+  // not_paired honestly — but a malformed one is now rejected up front.
+  s.on("client.start", [](const Value& params, std::string& code, std::string& msg) {
+    client::StreamSettings settings;
+    const Value* sv = params.find("settings");
+    if (!client::validate_stream_settings(sv ? *sv : Value::null(), settings, code, msg)) {
+      return Value::null();  // code/msg already set to bad_params + offending field
+    }
     code = "not_paired";
-    msg = "streaming requires the Moonlight fork (not vendored yet)";
+    msg = "host not paired (client pairing/connect lands in milestone 3)";
     return Value::null();
   });
 
@@ -77,8 +92,17 @@ int stream_main(int argc, char** argv) {
     std::fprintf(stderr, "[stream] handshake failed: %s\n", err.c_str());
     return 70;  // EX_SOFTWARE
   }
-  std::fprintf(stderr, "[stream] connected (IPC protocol v%d); serving client.* (stub backend).\n",
+#ifdef ASE_HAVE_MOONLIGHT
+  // Touch a pure moonlight-common-c symbol so linkage is proven at runtime, not just at link time
+  // (LiGetStageName(STAGE_NONE) -> "none"; no side effects, no connection).
+  std::fprintf(stderr,
+               "[stream] connected (IPC protocol v%d); moonlight-common-c linked (stage0=%s).\n",
+               ase::ipc::protocol_version(), LiGetStageName(STAGE_NONE));
+#else
+  std::fprintf(stderr,
+               "[stream] connected (IPC protocol v%d); serving client.* (moonlight not linked).\n",
                ase::ipc::protocol_version());
+#endif
   if (!server.run(err)) {
     std::fprintf(stderr, "[stream] ipc error: %s\n", err.c_str());
     return 70;

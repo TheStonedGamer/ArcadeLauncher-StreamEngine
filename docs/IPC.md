@@ -58,6 +58,13 @@ be answered out of order. Events are unsolicited and carry no `id`.
 | `client.start`  | `{ host, app, settings:{ width,height,fps,bitrateKbps,displayMode,hdr }, embedWindow?:bool }` | `{ nativeWindow? }` — if `embedWindow`, the child window handle (HWND / X11 id / NSView ptr as string) for the launcher to reparent |
 | `client.stop`   | — | `{ stopped: true }` |
 
+**`client.start` settings validation** (engine-side, `src/client/stream_config.cpp`): the engine
+range-checks `settings` before opening the stream and returns `bad_params` (with the offending
+field in the message) for anything out of bounds. Omitted fields take defaults
+(1920×1080, 60 fps, 20000 kbps, `fullscreen`, hdr off); `settings` itself may be omitted.
+Bounds: `width` 256–7680, `height` 144–4320, `fps` 10–240, `bitrateKbps` 500–500000,
+`displayMode` ∈ {`windowed`,`fullscreen`,`borderless`}.
+
 ## Events (engine → launcher)
 | event                   | data |
 |-------------------------|------|

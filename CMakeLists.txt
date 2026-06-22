@@ -37,6 +37,7 @@ add_executable(arcade-stream-engine
   src/main.cpp
   src/host/host_main.cpp
   src/client/stream_main.cpp
+  src/client/stream_config.cpp
   ${ASE_IPC_SOURCES}
   ${ASE_TRANSPORT_SOURCE}
 )
@@ -101,4 +102,13 @@ if(ASE_BUILD_TESTS)
     ASE_IPC_PROTOCOL_VERSION=1
   )
   add_test(NAME ase_tests COMMAND ase_tests)
+
+  # client.start settings validation — fork-independent (only needs json).
+  add_executable(ase_client_tests
+    tests/test_stream_config.cpp
+    src/client/stream_config.cpp
+    src/ipc/json.cpp
+  )
+  target_include_directories(ase_client_tests PRIVATE src)
+  add_test(NAME ase_client_tests COMMAND ase_client_tests)
 endif()
