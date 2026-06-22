@@ -25,7 +25,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
+      - name: Init moonlight-common-c submodule (skip the unused Sunshine tree)
+        shell: bash
+        run: |
+          git submodule update --init vendor/moonlight
+          git -C vendor/moonlight submodule update --init --recursive moonlight-common-c/moonlight-common-c
 
       - name: Set up MSVC dev environment
         uses: ilammy/msvc-dev-cmd@v1
@@ -60,7 +65,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
+      - name: Init moonlight-common-c submodule (skip the unused Sunshine tree)
+        shell: bash
+        run: |
+          git submodule update --init vendor/moonlight
+          git -C vendor/moonlight submodule update --init --recursive moonlight-common-c/moonlight-common-c
 
       - name: Install build deps
         run: |
