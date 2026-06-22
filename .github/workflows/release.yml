@@ -1,8 +1,12 @@
 name: Release
 
-# Cut a release when a v* tag is pushed: full Windows build (moonlight + vcpkg OpenSSL), package the
-# engine exe + its OpenSSL DLLs into a zip, and publish a GitHub release with that asset. Mirrors the
-# proven build-windows steps in build.yml. Runs on the same self-hosted Windows runner.
+# Cut a release when a v* tag is pushed. Two legs, each mirroring the proven build.yml steps on its
+# self-hosted runner:
+#   * Windows → full build (moonlight + vcpkg OpenSSL), package the engine exe + its OpenSSL DLLs into
+#     a zip, and create the GitHub release with that asset.
+#   * Linux   → full build (moonlight + system OpenSSL), package the engine ELF into a tar.gz, and
+#     upload it to the same release. No DLLs: libssl/libcrypto are system libs on Linux.
+# The launcher's release workflow downloads these assets to bundle the engine sidecar per-OS.
 
 on:
   push:
@@ -85,3 +89,52 @@ jobs:
 
             **Not yet wired:** live streaming (`client.start`), the Sunshine host control surface, and
             client identity/paired-cert persistence — tracked for follow-up releases.
+
+  release-linux:
+    # Serialized after the Windows leg so the release already exists; this leg only
+    # adds its asset (avoids two parallel "create release" calls racing on the tag).
+    needs: release-windows
+    runs-on: [self-hosted, prox-pve]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Init moonlight-common-c submodule (skip the unused Sunshine tree)
+        shell: bash
+        run: |
+          git config --global --add safe.directory '*'
+          git submodule update --init vendor/moonlight
+          git -C vendor/moonlight submodule update --init --recursive moonlight-common-c/moonlight-common-c
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build build-essential pkg-config libssl-dev
+
+      - name: Configure (full build — moonlight + system OpenSSL)
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DASE_LINK_MOONLIGHT=ON
+      - name: Build
+        run: cmake --build build
+      - name: "Unit tests (IPC, crypto, pairing)"
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Package
+        id: pkg
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver=$(tr -d ' \t\r\n' < VERSION)
+          name="ArcadeLauncher-StreamEngine-$ver-linux-x64"
+          mkdir -p "$name"
+          cp build/arcade-stream-engine "$name/"
+          strip "$name/arcade-stream-engine" || true
+          cp LICENSE README.md "$name/" 2>/dev/null || true
+          tar -czf "$name.tar.gz" -C "$name" .
+          echo "tarball=$name.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Linux asset to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          # No name/body here — the Windows leg already set them; this only adds the asset.
+          files: ${{ steps.pkg.outputs.tarball }}
+          fail_on_unmatched_files: true
