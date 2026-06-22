@@ -1,0 +1,87 @@
+name: Release
+
+# Cut a release when a v* tag is pushed: full Windows build (moonlight + vcpkg OpenSSL), package the
+# engine exe + its OpenSSL DLLs into a zip, and publish a GitHub release with that asset. Mirrors the
+# proven build-windows steps in build.yml. Runs on the same self-hosted Windows runner.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release-windows:
+    runs-on: [self-hosted, Windows, X64, arcade-win10]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Init moonlight-common-c submodule (skip the unused Sunshine tree)
+        shell: bash
+        run: |
+          git config --global --add safe.directory '*'
+          git submodule update --init vendor/moonlight
+          git -C vendor/moonlight submodule update --init --recursive moonlight-common-c/moonlight-common-c
+
+      - name: Set up MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Add VS CMake/CTest to PATH
+        shell: powershell
+        run: |
+          $vs = & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products '*' -property installationPath
+          "$vs\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Configure (full build — moonlight + OpenSSL)
+        shell: powershell
+        run: >
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+          -DASE_LINK_MOONLIGHT=ON
+          -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+          -DVCPKG_TARGET_TRIPLET=x64-windows
+      - name: Build
+        shell: powershell
+        run: cmake --build build --config Release
+      - name: "Unit tests (IPC, crypto, pairing)"
+        shell: powershell
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Package
+        id: pkg
+        shell: powershell
+        run: |
+          $ver = (Get-Content VERSION -Raw).Trim()
+          $name = "ArcadeLauncher-StreamEngine-$ver-win-x64"
+          New-Item -ItemType Directory -Force $name | Out-Null
+          Copy-Item build\Release\arcade-stream-engine.exe $name\
+          Copy-Item build\Release\*.dll $name\
+          Copy-Item LICENSE,README.md $name\ -ErrorAction SilentlyContinue
+          Compress-Archive -Path "$name\*" -DestinationPath "$name.zip" -Force
+          "zip=$name.zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "version=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Stream Engine ${{ github.ref_name }}"
+          files: ${{ steps.pkg.outputs.zip }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          body: |
+            First tagged release of the **ArcadeLauncher Stream Engine** — the GameStream
+            host/client engine behind the Unified Client's "My PCs" remote-play tab. GPL-3.0.
+
+            **What's in this build**
+            - Qt-free **GameStream pairing** (NvHTTP port from moonlight-qt): XML/hex parsing,
+              AES/SHA/RSA pairing crypto on OpenSSL, a TLS client with client-cert + pinned
+              server-cert, and the 5-stage `pair()` handshake — wired to the `client.pair` IPC method.
+            - Launcher↔engine **IPC server** (length-prefixed JSON over a named pipe; see `docs/IPC.md`).
+            - Single Qt-free binary linking **moonlight-common-c** + **OpenSSL**.
+
+            **Asset:** `arcade-stream-engine.exe` + its OpenSSL DLLs (Windows x64), built and tested on CI.
+
+            **Not yet wired:** live streaming (`client.start`), the Sunshine host control surface, and
+            client identity/paired-cert persistence — tracked for follow-up releases.
