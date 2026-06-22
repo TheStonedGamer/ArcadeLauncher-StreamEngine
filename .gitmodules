@@ -1,0 +1,6 @@
+[submodule "vendor/sunshine"]
+	path = vendor/sunshine
+	url = https://github.com/TheStonedGamer/Sunshine.git
+[submodule "vendor/moonlight"]
+	path = vendor/moonlight
+	url = https://github.com/TheStonedGamer/moonlight-qt.git

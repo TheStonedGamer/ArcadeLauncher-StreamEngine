@@ -47,11 +47,20 @@ target_compile_definitions(arcade-stream-engine PRIVATE
   ASE_IPC_PROTOCOL_VERSION=1
 )
 
-# --- Fork integration (wired during build bring-up; see docs/BUILD.md) ----------------------
+# --- Fork integration (milestone 2+; see docs/BUILD.md) -------------------------------------
+# The forks are vendored under vendor/ (submodules), but linking them pulls heavy build deps
+# (FFmpeg, OpenSSL, SDL2, NVENC/AMF, …), so it is OPT-IN behind explicit options. With both
+# OFF (the default) the engine builds as the fork-independent CLI + IPC server — keeping the
+# skeleton build and CI green until each milestone's deps are installed on the runners.
+#
 # Client mode links moonlight-common-c (the CMake GameStream client core); the full qmake-based
 # moonlight-qt app is NOT used — the engine owns its renderer/input (SDL2 + HW decode).
-set(ASE_MOONLIGHT_COMMON_C "${CMAKE_CURRENT_SOURCE_DIR}/vendor/moonlight/app/moonlight-common-c")
-if(ASE_BUILD_CLIENT AND EXISTS "${ASE_MOONLIGHT_COMMON_C}/CMakeLists.txt")
+option(ASE_LINK_MOONLIGHT "Link the vendored moonlight-common-c (needs its build deps)" OFF)
+set(ASE_MOONLIGHT_COMMON_C "${CMAKE_CURRENT_SOURCE_DIR}/vendor/moonlight/moonlight-common-c/moonlight-common-c")
+if(ASE_BUILD_CLIENT AND ASE_LINK_MOONLIGHT)
+  if(NOT EXISTS "${ASE_MOONLIGHT_COMMON_C}/CMakeLists.txt")
+    message(FATAL_ERROR "ASE_LINK_MOONLIGHT=ON but ${ASE_MOONLIGHT_COMMON_C} is missing — run scripts/vendor.sh")
+  endif()
   add_subdirectory(${ASE_MOONLIGHT_COMMON_C} moonlight-common-c EXCLUDE_FROM_ALL)
   target_link_libraries(arcade-stream-engine PRIVATE moonlight-common-c)
   target_compile_definitions(arcade-stream-engine PRIVATE ASE_HAVE_MOONLIGHT=1)
@@ -59,11 +68,15 @@ endif()
 
 # Host mode: first milestone is building the Sunshine fork standalone (prove deps), then
 # carving out the host control surface. Link target name confirmed during that step.
-# if(ASE_BUILD_HOST AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vendor/sunshine/CMakeLists.txt")
-#   add_subdirectory(vendor/sunshine EXCLUDE_FROM_ALL)
-#   target_link_libraries(arcade-stream-engine PRIVATE <sunshine-host-lib>)
-#   target_compile_definitions(arcade-stream-engine PRIVATE ASE_HAVE_SUNSHINE=1)
-# endif()
+option(ASE_LINK_SUNSHINE "Link the vendored Sunshine host backend (needs its build deps)" OFF)
+if(ASE_BUILD_HOST AND ASE_LINK_SUNSHINE)
+  if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vendor/sunshine/CMakeLists.txt")
+    message(FATAL_ERROR "ASE_LINK_SUNSHINE=ON but vendor/sunshine is missing — run scripts/vendor.sh")
+  endif()
+  add_subdirectory(vendor/sunshine EXCLUDE_FROM_ALL)
+  # target_link_libraries(arcade-stream-engine PRIVATE <sunshine-host-lib>)  # name TBD milestone 3
+  target_compile_definitions(arcade-stream-engine PRIVATE ASE_HAVE_SUNSHINE=1)
+endif()
 
 install(TARGETS arcade-stream-engine RUNTIME DESTINATION bin)
 

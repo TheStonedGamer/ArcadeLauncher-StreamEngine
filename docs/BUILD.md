@@ -18,7 +18,8 @@ below only apply once the Sunshine/Moonlight forks are vendored and wired in.
   `moonlight-qt` app is **qmake**-based and Qt-heavy; we do **not** swallow it. The engine owns
   a minimal renderer + input (SDL2 + platform HW decode), using `moonlight-qt` as reference.
   → vendored at `vendor/moonlight` (fork of `moonlight-qt`, which carries `moonlight-common-c`
-    as its own submodule under `app/moonlight-common-c`); we `add_subdirectory` that lib path.
+    as its own submodule at `moonlight-common-c/moonlight-common-c`); we `add_subdirectory`
+    that lib path (verified against the fork's `.gitmodules`, 2026-06-22).
 - **Host mode** builds on the **Sunshine** fork (CMake). First milestone: build the fork
   **standalone** on each runner to prove the toolchain/deps, then carve out the host control
   surface the engine drives over IPC.
