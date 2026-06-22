@@ -81,7 +81,19 @@ forks are vendored. Runners must have CMake ≥ 3.21.
      builds `arcade-stream-engine.exe` with the fork embedded **statically** and `ase_tests`
      green. NOTE: moonlight-common-c defaults to a DLL; the engine forces `BUILD_SHARED_LIBS
      OFF` for that subdir so MSVC gets a linkable static lib (a no-export DLL emits no import
-     `.lib` → LNK1181). `client.start` connection impl still TODO.
+     `.lib` → LNK1181). `client.start` connection impl in progress (below).
+   - **client.start settings validation ✅ (2026-06-22):** engine-side range-check of the stream
+     `settings` (`src/client/stream_config.cpp`, `ase_client_tests`); runtime moonlight linkage
+     proof via `LiGetStageName` at stream startup.
+   - **NvHTTP port (in progress):** GameStream pairing/serverinfo (NvHTTP) is **not** in
+     moonlight-common-c — it lives in moonlight-qt (Qt-based). We are porting it **Qt-free** onto
+     the OpenSSL we already link, keeping the single-binary design. Layered as: parse → crypto →
+     TLS client → pairing state machine.
+       - **Parse layer ✅:** `src/net/gamestream_xml.{h,cpp}` (Qt-free port of NvHTTP's
+         `getXmlString`/`getXmlStringFromHex`/status) + hex helpers; `ase_net_tests`.
+       - Next: pairing crypto (AES-128-ECB, SHA-256/1, cert-sig extract, RSA sign/verify — port of
+         `nvpairingmanager.cpp`, OpenSSL, gated on `ASE_LINK_MOONLIGHT`), then a TLS HTTP client
+         (client-cert + pinned server-cert), then the 5-stage `pair()` state machine.
 3. Sunshine host control surface driven over IPC; `host.status`/`enable`/`syncApps`.
 4. Engine renderer (SDL2 + HW decode) → child window handle returned for reparent.
 5. Controller pass-through end-to-end (capture → control stream → ViGEm/uinput inject).

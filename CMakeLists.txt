@@ -38,6 +38,7 @@ add_executable(arcade-stream-engine
   src/host/host_main.cpp
   src/client/stream_main.cpp
   src/client/stream_config.cpp
+  src/net/gamestream_xml.cpp
   ${ASE_IPC_SOURCES}
   ${ASE_TRANSPORT_SOURCE}
 )
@@ -111,4 +112,12 @@ if(ASE_BUILD_TESTS)
   )
   target_include_directories(ase_client_tests PRIVATE src)
   add_test(NAME ase_client_tests COMMAND ase_client_tests)
+
+  # GameStream XML/hex parsing (NvHTTP port) — pure, dependency-free.
+  add_executable(ase_net_tests
+    tests/test_gamestream_xml.cpp
+    src/net/gamestream_xml.cpp
+  )
+  target_include_directories(ase_net_tests PRIVATE src)
+  add_test(NAME ase_net_tests COMMAND ase_net_tests)
 endif()
