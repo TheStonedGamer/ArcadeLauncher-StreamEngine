@@ -82,8 +82,9 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           body: |
-            First tagged release of the **ArcadeLauncher Stream Engine** — the GameStream
-            host/client engine behind the Unified Client's "My PCs" remote-play tab. GPL-3.0.
+            The **ArcadeLauncher Stream Engine** — the GameStream host/client engine behind the
+            Unified Client's "My PCs" remote-play tab. GPL-3.0. This release adds the **live client
+            streaming** and **host control** surfaces on top of v0.1.0's pairing.
 
             **What's in this build**
             - Qt-free **GameStream pairing** (NvHTTP port from moonlight-qt): XML/hex parsing,
@@ -93,6 +94,10 @@ jobs:
             - Live **streaming** (`client.start`): launch/resume handshake → `LiStartConnection` with an
               FFmpeg HW-decode (`d3d11va`/`vaapi`) renderer into a borderless SDL2 window, **Opus audio**
               decode to SDL output, gamepad capture, and `stream.state` / `stream.stats` events.
+            - **App list** name→id resolution: `client.apps` lists a host's apps and `client.start`
+              accepts an app name or numeric appid.
+            - **Host control** (`host.status` / `host.syncApps` / `host.listApps` over a file-backed
+              apps.json catalog; `host.enable` drives the bundled Sunshine fork as a managed child).
             - Launcher↔engine **IPC server** (length-prefixed JSON over a named pipe; see `docs/IPC.md`).
             - Single Qt-free binary linking **moonlight-common-c** + **OpenSSL** + **SDL2** + **FFmpeg**
               + **Opus**.
@@ -101,8 +106,7 @@ jobs:
             built and tested on CI.
 
             **Not yet validated live:** end-to-end A/V against a real host (needs a GameStream/Sunshine
-            host + GPU client). **Not yet wired:** the Sunshine host control surface and app name→id
-            resolution — tracked for follow-up releases.
+            host + GPU client).
 
   release-linux:
     # Serialized after the Windows leg so the release already exists; this leg only

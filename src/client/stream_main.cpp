@@ -282,10 +282,13 @@ static void register_client_methods(ipc::Server& s) {
 #endif
   });
 
-  // client.start {host, app, settings, embedWindow?} -> begin streaming. The engine first
-  // validates/normalizes `settings` (fails fast with bad_params), then would open the moonlight
-  // connection. Pairing/connect isn't implemented yet, so a well-formed request still returns
-  // not_paired honestly — but a malformed one is now rejected up front.
+  // client.start {host, app, settings, embedWindow?} -> begin streaming. Validates/normalizes
+  // `settings` (fails fast with bad_params), connects to the paired host (pins its cert, learns the
+  // HTTPS port), resolves `app` (numeric appid or name via the app list), negotiates the remote-input
+  // key, runs the launch/resume handshake, then hands off to the worker-threaded StreamSession which
+  // drives LiStartConnection and reports progress as stream.state / stream.stats events. Returns
+  // {started:true} once the session is launched; connect/decode progress arrives as events.
+  // (Full build only; skeleton/no-OpenSSL or no-moonlight builds return an honest error.)
   s.on("client.start", [&s](const Value& params, std::string& code, std::string& msg) -> Value {
     client::StreamSettings settings;
     const Value* sv = params.find("settings");
