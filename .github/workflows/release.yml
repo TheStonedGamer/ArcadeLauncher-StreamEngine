@@ -166,12 +166,13 @@ jobs:
   # the vendored Sunshine fork and publish it as `ArcadeLauncher-Sunshine-<ver>-<os>-x64.zip` —
   # a ZIP on BOTH platforms so the launcher reuses its zip-slip-safe extractor (no tar dep).
   #
-  # ⚠️ DRAFT / NEEDS RUNNER VALIDATION. The Windows leg builds under MSYS2 UCRT64 (a different
-  # toolchain than the MSVC engine build above — mirrors scripts/build_sunshine_standalone.sh,
-  # which is proven locally) and requires MSYS2 at C:\msys64 on the runner. The DLL-closure copy
-  # (ntldd) and the Linux dep set below are first-drafts and may need iteration on the runner,
-  # exactly like the v0.11.0 bundle saga. Separate jobs (only `needs: release-windows` so the
-  # release exists): a failure here does NOT remove the already-published engine assets.
+  # VALIDATED on the runners 2026-06-22 (both legs build a working binary). The Windows leg builds
+  # under MSYS2 UCRT64 (a different toolchain than the MSVC engine build above) and requires MSYS2
+  # at C:\msys64 on the runner; build TESTS off + -j2 to stay under VM 111's RAM (default parallel
+  # OOMs cc1plus on the test TUs). The Linux leg builds inside ubuntu:24.04 via podman because the
+  # CT 130 host is GCC 12 (Sunshine needs GCC 13+ for std::format); Node 22 from NodeSource for the
+  # web UI. Separate jobs (only `needs: release-windows` so the release exists): a failure here does
+  # NOT remove the already-published engine assets.
   sunshine-windows:
     needs: release-windows
     runs-on: [self-hosted, Windows, X64, arcade-win10]
@@ -192,22 +193,28 @@ jobs:
         # UCRT64 toolchain is pre-provisioned on the arcade-win10 runner
         # (MSYS2 at C:\msys64, installed via the PVE guest agent), so CI just
         # drives the existing bash.exe — no in-CI toolchain install.
-        shell: cmd
+        # Use a native MSYS2 bash login shell as the step shell (NOT cmd):
+        # cmd has no `\` line-continuation, so the old `bash -lc "...\"` form
+        # silently truncated to its first line. MSYSTEM=UCRT64 + CHERE_INVOKING
+        # put the UCRT64 toolchain on PATH and keep the repo as the cwd.
+        shell: "C:\\msys64\\usr\\bin\\bash.exe --login -euo pipefail {0}"
+        env:
+          MSYSTEM: UCRT64
+          CHERE_INVOKING: "1"
         run: |
-          set MSYSTEM=UCRT64
-          set CHERE_INVOKING=1
-          C:\msys64\usr\bin\bash.exe -lc "set -euo pipefail; \
-            ver=$(tr -d ' \t\r\n' < VERSION); \
-            name=ArcadeLauncher-Sunshine-$ver-win-x64; \
-            cmake -B build/sunshine -G Ninja -S vendor/sunshine -DCMAKE_BUILD_TYPE=Release -DBUILD_DOCS=OFF -DSUNSHINE_ENABLE_TRAY=OFF; \
-            cmake --build build/sunshine; \
-            exe=$(find build/sunshine -name sunshine.exe | head -1); \
-            test -n \"$exe\"; \
-            mkdir -p \"$name\"; cp \"$exe\" \"$name/\"; \
-            ntldd -R \"$exe\" | grep -oiE '/ucrt64/bin/[^ ]+\\.dll' | sort -u | while read -r d; do cp \"$d\" \"$name/\" 2>/dev/null || true; done; \
-            cp LICENSE README.md \"$name/\" 2>/dev/null || true; \
-            (cd \"$name\" && zip -r \"../$name.zip\" .); \
-            ls -la \"$name.zip\""
+          ver=$(tr -d ' \t\r\n' < VERSION)
+          name=ArcadeLauncher-Sunshine-$ver-win-x64
+          # BUILD_TESTS=OFF: the test suite isn't shipped and its heavy TUs
+          # (nvhttp/video/stream) OOM the 8 GB runner. -j 2 bounds peak memory.
+          cmake -B build/sunshine -G Ninja -S vendor/sunshine -DCMAKE_BUILD_TYPE=Release -DBUILD_DOCS=OFF -DBUILD_TESTS=OFF -DSUNSHINE_ENABLE_TRAY=OFF
+          cmake --build build/sunshine -j 2
+          exe=$(find build/sunshine -name sunshine.exe | head -1)
+          test -n "$exe"
+          mkdir -p "$name"; cp "$exe" "$name/"
+          ntldd -R "$exe" | grep -oiE '/ucrt64/bin/[^ ]+\.dll' | sort -u | while read -r d; do cp "$d" "$name/" 2>/dev/null || true; done
+          cp LICENSE README.md "$name/" 2>/dev/null || true
+          (cd "$name" && zip -r "../$name.zip" .)
+          ls -la "$name.zip"
 
       - name: Publish Sunshine host asset
         uses: softprops/action-gh-release@v2
@@ -228,38 +235,49 @@ jobs:
           git config --global --add safe.directory '*'
           git submodule update --init --recursive vendor/sunshine
 
-      - name: Install Node.js (NodeSource — distro nodejs/npm deps are broken)
-        run: |
-          curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-          sudo apt-get install -y nodejs
-
-      - name: Install Sunshine build deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake ninja-build build-essential pkg-config \
-            libssl-dev libavdevice-dev libboost-filesystem-dev libboost-locale-dev \
-            libboost-log-dev libboost-program-options-dev libcap-dev libcurl4-openssl-dev \
-            libdrm-dev libevdev-dev libminiupnpc-dev libnotify-dev libnuma-dev libopus-dev \
-            libpulse-dev libva-dev libvdpau-dev libwayland-dev libx11-dev libxcb-shm0-dev \
-            libxcb-xfixes0-dev libxcb1-dev libxfixes-dev libxrandr-dev libxtst-dev
-
-      - name: Build Sunshine + zip
+      - name: Build Sunshine in ubuntu:24.04 (GCC 13+) via podman + zip
         id: pkg
         shell: bash
         run: |
           set -euo pipefail
           ver=$(tr -d ' \t\r\n' < VERSION)
           name="ArcadeLauncher-Sunshine-$ver-linux-x64"
-          cmake -B build/sunshine -G Ninja -S vendor/sunshine -DCMAKE_BUILD_TYPE=Release -DBUILD_DOCS=OFF -DSUNSHINE_ENABLE_TRAY=OFF
-          cmake --build build/sunshine
+          # The runner (CT 130) ships GCC 12, but Sunshine needs C++20 std::format
+          # (GCC 13+). Build inside ubuntu:24.04 (GCC 13) via podman, which is
+          # pre-provisioned on the runner. sudo podman = rootful (the runner has
+          # passwordless sudo); chown the root-owned build tree back afterwards so
+          # the next checkout can clean it. BUILD_TESTS=OFF (not shipped, heavy
+          # TUs OOM the box); -j 2 bounds peak memory; CUDA off (no toolkit).
+          sudo podman run --rm -v "$PWD":/src:rw -w /src docker.io/library/ubuntu:24.04 bash -lc '
+            set -eo pipefail
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            # ubuntu:24.04 ships Node 18; the Sunshine web UI (vite 6 / vue-i18n)
+            # needs Node 20+. Pull Node 22 from NodeSource (nodejs bundles npm).
+            apt-get install -y -qq curl ca-certificates gnupg
+            curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+            apt-get install -y -qq nodejs cmake ninja-build build-essential pkg-config git \
+              python3-jinja2 python3-setuptools glslang-tools libvulkan-dev libpipewire-0.3-dev \
+              libssl-dev libavdevice-dev libboost-filesystem-dev libboost-locale-dev \
+              libboost-log-dev libboost-program-options-dev libcap-dev libcurl4-openssl-dev \
+              libdrm-dev libgbm-dev libevdev-dev libminiupnpc-dev libnotify-dev libnuma-dev libopus-dev \
+              libpulse-dev libva-dev libvdpau-dev libwayland-dev libx11-dev libxcb-shm0-dev \
+              libxcb-xfixes0-dev libxcb1-dev libxfixes-dev libxrandr-dev libxtst-dev
+            git config --global --add safe.directory "*"
+            rm -rf build/sunshine
+            cmake -B build/sunshine -G Ninja -S vendor/sunshine -DCMAKE_BUILD_TYPE=Release \
+              -DBUILD_DOCS=OFF -DBUILD_TESTS=OFF -DSUNSHINE_ENABLE_TRAY=OFF -DSUNSHINE_ENABLE_CUDA=OFF
+            cmake --build build/sunshine -j 2
+          '
+          sudo chown -R "$(id -u):$(id -g)" build
           exe=$(find build/sunshine -name sunshine -type f | head -1)
           test -n "$exe"
           mkdir -p "$name"
           cp "$exe" "$name/sunshine"
           strip "$name/sunshine" || true
           cp LICENSE README.md "$name/" 2>/dev/null || true
-          # Linux Sunshine links system libs (libssl/libopus/etc.) — declared as
-          # package deps in a real .deb; the launcher's host PC must have them.
+          # Linux Sunshine links system libs (libssl/libopus/etc.) — the launcher's
+          # host PC must have them (declared as package deps in a real .deb).
           (cd "$name" && zip -r "../$name.zip" .)
           echo "zip=$name.zip" >> "$GITHUB_OUTPUT"
 
