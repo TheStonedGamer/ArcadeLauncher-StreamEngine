@@ -23,4 +23,7 @@ constexpr const char* kEvent = "event";  // engine -> launcher (unsolicited)
 // Returns kProtocolVersion (and asserts it matches the CMake-provided macro).
 int protocol_version();
 
+// Extract the value of `--ipc <token>` from a mode's argv (host/stream). Returns "" if absent.
+std::string ipc_token_from_args(int argc, char** argv);
+
 }  // namespace ase::ipc

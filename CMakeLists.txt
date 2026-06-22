@@ -18,11 +18,27 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(ASE_BUILD_HOST   "Build host mode (Sunshine fork)"   ON)
 option(ASE_BUILD_CLIENT "Build client mode (Moonlight fork)" ON)
 
+# IPC core (transport-agnostic) — also reused by the test target below.
+set(ASE_IPC_SOURCES
+  src/ipc/ipc.cpp
+  src/ipc/json.cpp
+  src/ipc/frame.cpp
+  src/ipc/server.cpp
+)
+
+# Platform byte transport (named pipe on Windows, Unix domain socket elsewhere).
+if(WIN32)
+  set(ASE_TRANSPORT_SOURCE src/ipc/transport_win.cpp)
+else()
+  set(ASE_TRANSPORT_SOURCE src/ipc/transport_posix.cpp)
+endif()
+
 add_executable(arcade-stream-engine
   src/main.cpp
   src/host/host_main.cpp
   src/client/stream_main.cpp
-  src/ipc/ipc.cpp
+  ${ASE_IPC_SOURCES}
+  ${ASE_TRANSPORT_SOURCE}
 )
 
 target_include_directories(arcade-stream-engine PRIVATE src)
@@ -50,3 +66,19 @@ endif()
 # endif()
 
 install(TARGETS arcade-stream-engine RUNTIME DESTINATION bin)
+
+# --- Tests (fork-independent: JSON, framing, handshake/dispatch over an in-memory transport) --
+option(ASE_BUILD_TESTS "Build unit tests" ON)
+if(ASE_BUILD_TESTS)
+  enable_testing()
+  add_executable(ase_tests
+    tests/test_ipc.cpp
+    ${ASE_IPC_SOURCES}
+  )
+  target_include_directories(ase_tests PRIVATE src)
+  target_compile_definitions(ase_tests PRIVATE
+    ENGINE_VERSION="${ENGINE_VERSION}"
+    ASE_IPC_PROTOCOL_VERSION=1
+  )
+  add_test(NAME ase_tests COMMAND ase_tests)
+endif()

@@ -58,6 +58,10 @@ cmake --build build --config Release
 forks are vendored. Runners must have CMake ≥ 3.21.
 
 ## Bring-up milestones (step 2 → 5)
+0. **IPC server done (fork-independent).** ✅ JSON + length-prefixed framing + hello handshake
+   + req/res/event dispatch (`src/ipc/`), with host.*/client.* stub handlers wired in both
+   modes. Covered by `ase_tests` (CTest) over an in-memory transport, plus a real named-pipe
+   round-trip via `scripts/ipc_smoke.ps1`. The launcher can develop against this wire now.
 1. **Forks build standalone** on each runner (deps proven). ← step 2
 2. `moonlight-common-c` links into the engine; `client.start` opens a connection.
 3. Sunshine host control surface driven over IPC; `host.status`/`enable`/`syncApps`.
