@@ -82,8 +82,14 @@ endif()
 option(ASE_WITH_OPENSSL "Build the GameStream pairing crypto (needs OpenSSL)" ${ASE_LINK_MOONLIGHT})
 if(ASE_WITH_OPENSSL)
   find_package(OpenSSL REQUIRED)
-  target_sources(arcade-stream-engine PRIVATE src/net/pairing_crypto.cpp)
-  target_link_libraries(arcade-stream-engine PRIVATE OpenSSL::Crypto)
+  target_sources(arcade-stream-engine PRIVATE
+    src/net/pairing_crypto.cpp   # pairing crypto primitives
+    src/net/identity.cpp         # client cert/key generation
+    src/net/http_client.cpp      # TLS HTTP client (client-cert + pinned server-cert)
+    src/net/nv_pairing.cpp       # 5-stage pair() state machine
+  )
+  # http_client uses libssl (TLS), the others only libcrypto.
+  target_link_libraries(arcade-stream-engine PRIVATE OpenSSL::SSL OpenSSL::Crypto)
   target_compile_definitions(arcade-stream-engine PRIVATE ASE_HAVE_OPENSSL=1)
 endif()
 
@@ -142,5 +148,19 @@ if(ASE_BUILD_TESTS)
     target_include_directories(ase_crypto_tests PRIVATE src)
     target_link_libraries(ase_crypto_tests PRIVATE OpenSSL::Crypto)
     add_test(NAME ase_crypto_tests COMMAND ase_crypto_tests)
+
+    # Identity generation, HTTP request/response helpers, and the full 5-stage pair() state machine
+    # driven against an in-process simulated GameStream server (no sockets).
+    add_executable(ase_pairing_tests
+      tests/test_nv_pairing.cpp
+      src/net/nv_pairing.cpp
+      src/net/pairing_crypto.cpp
+      src/net/identity.cpp
+      src/net/http_client.cpp
+      src/net/gamestream_xml.cpp
+    )
+    target_include_directories(ase_pairing_tests PRIVATE src)
+    target_link_libraries(ase_pairing_tests PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+    add_test(NAME ase_pairing_tests COMMAND ase_pairing_tests)
   endif()
 endif()

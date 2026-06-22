@@ -85,10 +85,10 @@ forks are vendored. Runners must have CMake ≥ 3.21.
    - **client.start settings validation ✅ (2026-06-22):** engine-side range-check of the stream
      `settings` (`src/client/stream_config.cpp`, `ase_client_tests`); runtime moonlight linkage
      proof via `LiGetStageName` at stream startup.
-   - **NvHTTP port (in progress):** GameStream pairing/serverinfo (NvHTTP) is **not** in
-     moonlight-common-c — it lives in moonlight-qt (Qt-based). We are porting it **Qt-free** onto
-     the OpenSSL we already link, keeping the single-binary design. Layered as: parse → crypto →
-     TLS client → pairing state machine.
+   - **NvHTTP port ✅ (complete):** GameStream pairing/serverinfo (NvHTTP) is **not** in
+     moonlight-common-c — it lives in moonlight-qt (Qt-based). Ported **Qt-free** onto the OpenSSL
+     we already link, keeping the single-binary design. Layered as: parse → crypto → TLS client →
+     pairing state machine, then wired into the `client.pair` IPC method.
        - **Parse layer ✅:** `src/net/gamestream_xml.{h,cpp}` (Qt-free port of NvHTTP's
          `getXmlString`/`getXmlStringFromHex`/status) + hex helpers; `ase_net_tests`.
        - **Crypto layer ✅:** `src/net/pairing_crypto.{h,cpp}` (Qt-free port of
@@ -97,9 +97,18 @@ forks are vendored. Runners must have CMake ≥ 3.21.
          is gated behind a new `ASE_WITH_OPENSSL` option (auto-ON with `ASE_LINK_MOONLIGHT`; can be
          forced on alone against a standalone OpenSSL). KAT-tested (FIPS-180 SHA, FIPS-197 AES) +
          runtime-keypair sign/verify in `ase_crypto_tests`.
-       - Next: a TLS HTTP client (client-cert + pinned server-cert, replacing Qt's
-         `openConnectionToString`), then the 5-stage `pair()` state machine (which also needs a
-         client identity/cert generator — port of `identitymanager.cpp`).
+       - **TLS HTTP client ✅:** `src/net/http_client.{h,cpp}` (winsock/POSIX + OpenSSL): mutual
+         TLS presenting the client cert and **pinning** the self-signed server cert (`X509_cmp`),
+         plus pure, unit-tested request-target building and HTTP/chunked response parsing.
+       - **Identity generator ✅:** `src/net/identity.{h,cpp}` — RSA-2048 self-signed
+         CN="NVIDIA GameStream Client" cert/key + unique-id (port of `identitymanager.cpp`).
+       - **Pairing state machine ✅:** `src/net/nv_pairing.{h,cpp}` — the 5-stage `pair()` with an
+         **injected transport** so it is tested end-to-end against an in-process simulated
+         GameStream server (real host-side crypto, no sockets): PAIRED / PinWrong /
+         AlreadyInProgress / transport-failure all covered in `ase_pairing_tests`.
+       - **Wired up:** `client.pair {host, pin}` runs serverinfo discovery + the handshake and
+         returns the pinned server cert. Remaining: client-identity + paired-cert **persistence**
+         (port of `identitymanager.cpp`'s settings store) so pairings survive across sessions.
 3. Sunshine host control surface driven over IPC; `host.status`/`enable`/`syncApps`.
 4. Engine renderer (SDL2 + HW decode) → child window handle returned for reparent.
 5. Controller pass-through end-to-end (capture → control stream → ViGEm/uinput inject).

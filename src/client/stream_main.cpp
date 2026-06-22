@@ -20,9 +20,32 @@
 #include <Limelight.h>
 #endif
 
+#ifdef ASE_HAVE_OPENSSL
+#include <cstdlib>
+#include <string>
+
+#include "net/gamestream_xml.h"
+#include "net/http_client.h"
+#include "net/identity.h"
+#include "net/nv_pairing.h"
+#endif
+
 namespace ase {
 
 using json::Value;
+
+#ifdef ASE_HAVE_OPENSSL
+namespace {
+// GameStream default ports (NvHTTP).
+constexpr int kDefaultHttpPort = 47989;
+constexpr int kDefaultHttpsPort = 47984;
+
+// First component of a dotted version like "7.1.431.0" (NvHTTP::parseQuad[0]); 0 if absent.
+int major_version(const std::string& appversion) {
+  return appversion.empty() ? 0 : std::atoi(appversion.c_str());
+}
+}  // namespace
+#endif
 
 static void register_client_methods(ipc::Server& s) {
   // client.hosts -> known/paired hosts. Stub: none.
@@ -39,11 +62,70 @@ static void register_client_methods(ipc::Server& s) {
     return r;
   });
 
-  // client.pair {host, pin?} -> pair with a host. Stub: cannot pair without the fork.
-  s.on("client.pair", [](const Value&, std::string& code, std::string& msg) {
+  // client.pair {host, pin} -> run the GameStream pairing handshake (Qt-free NvHTTP port). Fetches
+  // serverinfo over HTTP to learn the HTTPS port + server generation, generates a client identity,
+  // then drives the 5-stage pair(). On success returns the pinned server cert (hex) so the launcher
+  // can persist it. NOTE: identity + paired-cert persistence (IdentityManager) is the next step —
+  // today a fresh identity is minted per call, so the pairing is not yet reused across sessions.
+  s.on("client.pair", [](const Value& params, std::string& code, std::string& msg) -> Value {
+#ifdef ASE_HAVE_OPENSSL
+    const std::string host = params.get_str("host");
+    const std::string pin = params.get_str("pin");
+    if (host.empty() || pin.empty()) {
+      code = "bad_params";
+      msg = "client.pair requires non-empty string 'host' and 'pin'";
+      return Value::null();
+    }
+
+    net::ClientIdentity identity;
+    if (!net::generate_identity(identity)) {
+      code = "pairing_failed";
+      msg = "could not generate client identity";
+      return Value::null();
+    }
+
+    net::NvHttpClient client(host, kDefaultHttpPort, kDefaultHttpsPort, identity,
+                             net::generate_unique_id());
+
+    // serverinfo (HTTP, no pairing needed) -> server generation + HTTPS port.
+    const std::string info = client.get_http("serverinfo", "", 5000);
+    if (info.empty() || net::xml_attr(info, "root", "status_code") != "200") {
+      code = "host_unreachable";
+      msg = "no serverinfo response from " + host + " (is GameStream/Sunshine running?)";
+      return Value::null();
+    }
+    const int gen = major_version(net::xml_text(info, "appversion"));
+    const int httpsPort = std::atoi(net::xml_text(info, "HttpsPort").c_str());
+    if (httpsPort > 0) client.set_https_port(httpsPort);
+
+    net::PairResult res = net::pair_with_client(client, identity, pin, gen);
+    switch (res.state) {
+      case net::PairState::Paired: {
+        Value r = Value::object();
+        r.set("paired", Value::boolean(true));
+        r.set("serverCert", Value::string(net::to_hex(res.serverCertPem)));
+        return r;
+      }
+      case net::PairState::PinWrong:
+        code = "pin_wrong";
+        msg = "the PIN entered did not match";
+        return Value::null();
+      case net::PairState::AlreadyInProgress:
+        code = "already_pairing";
+        msg = "the host is already pairing with another client";
+        return Value::null();
+      case net::PairState::Failed:
+      default:
+        code = "pairing_failed";
+        msg = "pairing handshake failed";
+        return Value::null();
+    }
+#else
+    (void)params;
     code = "pairing_failed";
-    msg = "client backend (Moonlight fork) not vendored yet";
+    msg = "engine built without OpenSSL (ASE_WITH_OPENSSL=OFF); pairing unavailable";
     return Value::null();
+#endif
   });
 
   // client.start {host, app, settings, embedWindow?} -> begin streaming. The engine first

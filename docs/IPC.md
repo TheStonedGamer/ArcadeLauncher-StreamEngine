@@ -54,9 +54,17 @@ be answered out of order. Events are unsolicited and carry no `id`.
 |-----------------|--------|--------|
 | `client.hosts`  | — | `{ hosts: [{ name, address, paired, state }] }` |
 | `client.apps`   | `{ host }` | `{ apps: [{ name }] }` |
-| `client.pair`   | `{ host, pin? }` | `{ ok, certFingerprint }` — `pin` omitted when the gateway brokered it |
+| `client.pair`   | `{ host, pin }` | `{ paired: true, serverCert }` — `serverCert` is the pinned host cert as hex |
 | `client.start`  | `{ host, app, settings:{ width,height,fps,bitrateKbps,displayMode,hdr }, embedWindow?:bool }` | `{ nativeWindow? }` — if `embedWindow`, the child window handle (HWND / X11 id / NSView ptr as string) for the launcher to reparent |
 | `client.stop`   | — | `{ stopped: true }` |
+
+**`client.pair`** (engine-side, Qt-free NvHTTP port — `src/net/{identity,http_client,nv_pairing,
+pairing_crypto,gamestream_xml}.cpp`, OpenSSL build only): fetches `serverinfo` over HTTP to learn
+the host's HTTPS port + generation, generates a client identity, then runs the 5-stage GameStream
+pairing handshake. Error codes: `bad_params` (missing host/pin), `host_unreachable` (no serverinfo),
+`pin_wrong`, `already_pairing`, `pairing_failed`. NOTE: client identity + paired-cert persistence
+(moonlight's IdentityManager settings store) is the remaining wiring — a fresh identity is currently
+minted per call, so pairings are not yet reused across sessions.
 
 **`client.start` settings validation** (engine-side, `src/client/stream_config.cpp`): the engine
 range-checks `settings` before opening the stream and returns `bad_params` (with the offending
