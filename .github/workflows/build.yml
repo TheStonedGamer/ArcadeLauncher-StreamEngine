@@ -1,13 +1,12 @@
 name: Build
 
-# Builds the engine on the same self-hosted runners as the launcher:
-#   * Windows  → [self-hosted, Windows, X64, arcade-win10]  (VM 111, MSVC + VS Build Tools)
-#   * Linux    → [self-hosted, prox-pve]                    (CT 130 arcade-gh-runner, Debian)
-# Runner requirement: CMake >= 3.21 available (VS ships one; on Linux apt installs it).
-#
-# TODAY this builds the CLI/IPC skeleton (no external deps). As the Sunshine/Moonlight
-# forks are vendored under vendor/ (git submodules), uncomment their dep-install steps
-# below and the add_subdirectory wiring in CMakeLists.txt. See docs/BUILD.md.
+# Full build of the engine WITH the vendored forks linked (ASE_LINK_MOONLIGHT=ON, which auto-enables
+# ASE_WITH_OPENSSL) on the self-hosted runners:
+#   * Windows → [self-hosted, Windows, X64, arcade-win10]  (VM 111; VS 2022 BuildTools + vcpkg OpenSSL)
+#   * Linux   → [self-hosted, prox-pve]                    (CT 130 arcade-gh-runner; system libssl-dev)
+# This compiles AND tests the NvHTTP pairing port (ase_crypto_tests + ase_pairing_tests) — the Windows
+# job exercises the winsock TLS path, the Linux job the POSIX path. vcpkg is pre-installed at C:\vcpkg
+# on the Windows runner (persists between runs); the Linux runner uses the distro OpenSSL.
 
 on:
   push:
@@ -26,22 +25,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive   # pulls the forks once they exist; no-op until then
+          submodules: recursive
 
       - name: Set up MSVC dev environment
         uses: ilammy/msvc-dev-cmd@v1
 
-      # --- Fork build deps (uncomment as the forks are vendored) ------------------
-      # - name: Install host (Sunshine) deps
-      #   run: choco install -y ...   # boost, openssl, etc. — see docs/BUILD.md
-      # - name: Install client (Moonlight) deps
-      #   run: choco install -y ...   # ffmpeg, SDL2 — see docs/BUILD.md
+      - name: Add VS CMake/CTest to PATH
+        shell: pwsh
+        run: |
+          $vs = & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          "$vs\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
-      - name: Configure
-        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+      - name: Configure (full build — moonlight + OpenSSL)
+        shell: pwsh
+        run: >
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+          -DASE_LINK_MOONLIGHT=ON
+          -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+          -DVCPKG_TARGET_TRIPLET=x64-windows
       - name: Build
+        shell: pwsh
         run: cmake --build build --config Release
-      - name: "Unit tests (IPC: JSON / framing / dispatch)"
+      - name: "Unit tests (IPC, crypto, pairing)"
+        shell: pwsh
         run: ctest --test-dir build -C Release --output-on-failure
       - name: Smoke test (CLI dispatch)
         shell: bash
@@ -56,22 +62,18 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install base build deps
+      - name: Install build deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build build-essential pkg-config
+          sudo apt-get install -y cmake ninja-build build-essential pkg-config libssl-dev
 
-      # --- Fork build deps (uncomment as the forks are vendored) ------------------
-      # - name: Install host (Sunshine) deps
-      #   run: sudo apt-get install -y ...   # see docs/BUILD.md
-      # - name: Install client (Moonlight) deps
-      #   run: sudo apt-get install -y libavcodec-dev libsdl2-dev ...   # see docs/BUILD.md
-
-      - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Configure (full build — moonlight + OpenSSL)
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DASE_LINK_MOONLIGHT=ON
       - name: Build
         run: cmake --build build
-      - name: "Unit tests (IPC: JSON / framing / dispatch)"
+      - name: "Unit tests (IPC, crypto, pairing)"
         run: ctest --test-dir build --output-on-failure
       - name: Smoke test (CLI dispatch)
         run: |
