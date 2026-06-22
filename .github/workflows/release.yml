@@ -159,3 +159,103 @@ jobs:
           # No name/body here — the Windows leg already set them; this only adds the asset.
           files: ${{ steps.pkg.outputs.tarball }}
           fail_on_unmatched_files: true
+
+  # ---------------------------------------------------------------------------------------------
+  # Host sidecar (Sunshine fork). The launcher does NOT bundle this in its installer — it fetches
+  # it on first "Stream from this PC" enable (launcher streaming/host_fetch.rs). These jobs build
+  # the vendored Sunshine fork and publish it as `ArcadeLauncher-Sunshine-<ver>-<os>-x64.zip` —
+  # a ZIP on BOTH platforms so the launcher reuses its zip-slip-safe extractor (no tar dep).
+  #
+  # ⚠️ DRAFT / NEEDS RUNNER VALIDATION. The Windows leg builds under MSYS2 UCRT64 (a different
+  # toolchain than the MSVC engine build above — mirrors scripts/build_sunshine_standalone.sh,
+  # which is proven locally) and requires MSYS2 at C:\msys64 on the runner. The DLL-closure copy
+  # (ntldd) and the Linux dep set below are first-drafts and may need iteration on the runner,
+  # exactly like the v0.11.0 bundle saga. Separate jobs (only `needs: release-windows` so the
+  # release exists): a failure here does NOT remove the already-published engine assets.
+  sunshine-windows:
+    needs: release-windows
+    runs-on: [self-hosted, Windows, X64, arcade-win10]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Init Sunshine submodule (recursive — full host tree)
+        shell: bash
+        run: |
+          git config --global --add safe.directory '*'
+          git submodule update --init --recursive vendor/sunshine
+
+      - name: Build Sunshine (MSYS2 UCRT64) + collect DLL closure + zip
+        shell: cmd
+        run: |
+          set MSYSTEM=UCRT64
+          set CHERE_INVOKING=1
+          C:\msys64\usr\bin\bash.exe -lc "set -euo pipefail; \
+            ver=$(tr -d ' \t\r\n' < VERSION); \
+            name=ArcadeLauncher-Sunshine-$ver-win-x64; \
+            pacman -Sy --noconfirm; \
+            pacman -S --needed --noconfirm zip mingw-w64-ucrt-x86_64-toolchain mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-boost mingw-w64-ucrt-x86_64-cppwinrt mingw-w64-ucrt-x86_64-curl-winssl mingw-w64-ucrt-x86_64-miniupnpc mingw-w64-ucrt-x86_64-onevpl mingw-w64-ucrt-x86_64-openssl mingw-w64-ucrt-x86_64-opus mingw-w64-ucrt-x86_64-MinHook mingw-w64-ucrt-x86_64-nodejs mingw-w64-ucrt-x86_64-nsis mingw-w64-ucrt-x86_64-ntldd-git; \
+            cmake -B build/sunshine -G Ninja -S vendor/sunshine -DCMAKE_BUILD_TYPE=Release -DBUILD_DOCS=OFF; \
+            cmake --build build/sunshine; \
+            exe=$(find build/sunshine -name sunshine.exe | head -1); \
+            test -n \"$exe\"; \
+            mkdir -p \"$name\"; cp \"$exe\" \"$name/\"; \
+            ntldd -R \"$exe\" | grep -oiE '/ucrt64/bin/[^ ]+\\.dll' | sort -u | while read -r d; do cp \"$d\" \"$name/\" 2>/dev/null || true; done; \
+            cp LICENSE README.md \"$name/\" 2>/dev/null || true; \
+            (cd \"$name\" && zip -r \"../$name.zip\" .); \
+            ls -la \"$name.zip\""
+
+      - name: Publish Sunshine host asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ArcadeLauncher-Sunshine-*-win-x64.zip
+          fail_on_unmatched_files: true
+
+  sunshine-linux:
+    needs: release-windows
+    runs-on: [self-hosted, prox-pve]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Init Sunshine submodule (recursive — full host tree)
+        shell: bash
+        run: |
+          git config --global --add safe.directory '*'
+          git submodule update --init --recursive vendor/sunshine
+
+      - name: Install Sunshine build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build build-essential pkg-config nodejs npm \
+            libssl-dev libavdevice-dev libboost-filesystem-dev libboost-locale-dev \
+            libboost-log-dev libboost-program-options-dev libcap-dev libcurl4-openssl-dev \
+            libdrm-dev libevdev-dev libminiupnpc-dev libnotify-dev libnuma-dev libopus-dev \
+            libpulse-dev libva-dev libvdpau-dev libwayland-dev libx11-dev libxcb-shm0-dev \
+            libxcb-xfixes0-dev libxcb1-dev libxfixes-dev libxrandr-dev libxtst-dev
+
+      - name: Build Sunshine + zip
+        id: pkg
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver=$(tr -d ' \t\r\n' < VERSION)
+          name="ArcadeLauncher-Sunshine-$ver-linux-x64"
+          cmake -B build/sunshine -G Ninja -S vendor/sunshine -DCMAKE_BUILD_TYPE=Release -DBUILD_DOCS=OFF
+          cmake --build build/sunshine
+          exe=$(find build/sunshine -name sunshine -type f | head -1)
+          test -n "$exe"
+          mkdir -p "$name"
+          cp "$exe" "$name/sunshine"
+          strip "$name/sunshine" || true
+          cp LICENSE README.md "$name/" 2>/dev/null || true
+          # Linux Sunshine links system libs (libssl/libopus/etc.) — declared as
+          # package deps in a real .deb; the launcher's host PC must have them.
+          (cd "$name" && zip -r "../$name.zip" .)
+          echo "zip=$name.zip" >> "$GITHUB_OUTPUT"
+
+      - name: Publish Sunshine host asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.pkg.outputs.zip }}
+          fail_on_unmatched_files: true
