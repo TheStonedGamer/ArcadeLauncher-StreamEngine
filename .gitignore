@@ -1,0 +1,26 @@
+# Build output
+/build/
+/out/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+*.o
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.dll
+*.lib
+*.a
+*.so
+*.dylib
+
+# IDE / editor
+/.vs/
+/.idea/
+/.vscode/
+*.user
+
+# Vendored fork build artifacts (the forks themselves are git submodules under vendor/)
+vendor/**/build/
+vendor/**/cmake-build-*/
