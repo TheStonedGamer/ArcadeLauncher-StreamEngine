@@ -45,6 +45,7 @@ be answered out of order. Events are unsolicited and carry no `id`.
 | `host.status`     | — | `{ installed, running, configured, gpuCapable, appsCount }` |
 | `host.enable`     | `{ on: bool }` | `{ running: bool }` — start/stop hosting, write creds, open firewall |
 | `host.syncApps`   | `{ games: [{ id, name, coverPath, launchCmd }] }` | `{ added, removed, updated }` — diff library vs registered Sunshine apps |
+| `host.listApps`   | — | `{ apps: [{ gameKey, name, coverRef }] }` — the host's currently registered/streamable games, so the launcher can publish them to the server for the "My PCs" tab (T12k-9) |
 | `host.pairAccept` | `{ pin: "NNNN" }` | `{ ok, certFingerprint }` — accept an inbound pairing PIN |
 | `host.deviceInfo` | — | `{ deviceId, lanAddr, meshAddr, certFingerprint }` — for gateway registration (T12k-7/8) |
 
