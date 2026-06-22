@@ -278,6 +278,8 @@ jobs:
           cp LICENSE README.md "$name/" 2>/dev/null || true
           # Linux Sunshine links system libs (libssl/libopus/etc.) — the launcher's
           # host PC must have them (declared as package deps in a real .deb).
+          # zip runs on the host (not the container); self-heal if the runner lacks it.
+          command -v zip >/dev/null || sudo apt-get install -y -qq zip
           (cd "$name" && zip -r "../$name.zip" .)
           echo "zip=$name.zip" >> "$GITHUB_OUTPUT"
 
