@@ -29,6 +29,7 @@ jobs:
       - name: Init moonlight-common-c submodule (skip the unused Sunshine tree)
         shell: bash
         run: |
+          git config --global --add safe.directory '*'
           git submodule update --init vendor/moonlight
           git -C vendor/moonlight submodule update --init --recursive moonlight-common-c/moonlight-common-c
 
@@ -69,6 +70,7 @@ jobs:
       - name: Init moonlight-common-c submodule (skip the unused Sunshine tree)
         shell: bash
         run: |
+          git config --global --add safe.directory '*'
           git submodule update --init vendor/moonlight
           git -C vendor/moonlight submodule update --init --recursive moonlight-common-c/moonlight-common-c
 
