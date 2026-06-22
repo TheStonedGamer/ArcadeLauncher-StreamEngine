@@ -188,32 +188,26 @@ jobs:
           git config --global core.longpaths true
           git submodule update --init --recursive vendor/sunshine
 
-      - name: Set up MSYS2 (UCRT64) + toolchain
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: UCRT64
-          update: true
-          install: zip
-          pacboy: >-
-            toolchain:u cmake:u ninja:u boost:u cppwinrt:u curl-winssl:u
-            miniupnpc:u onevpl:u openssl:u opus:u MinHook:u nodejs:u nsis:u
-            ntldd-git:u
-
-      - name: Build Sunshine (UCRT64) + collect DLL closure + zip
-        shell: msys2 {0}
+      - name: Build Sunshine (MSYS2 UCRT64) + collect DLL closure + zip
+        # UCRT64 toolchain is pre-provisioned on the arcade-win10 runner
+        # (MSYS2 at C:\msys64, installed via the PVE guest agent), so CI just
+        # drives the existing bash.exe — no in-CI toolchain install.
+        shell: cmd
         run: |
-          set -euo pipefail
-          ver=$(tr -d ' \t\r\n' < VERSION)
-          name=ArcadeLauncher-Sunshine-$ver-win-x64
-          cmake -B build/sunshine -G Ninja -S vendor/sunshine -DCMAKE_BUILD_TYPE=Release -DBUILD_DOCS=OFF -DSUNSHINE_ENABLE_TRAY=OFF
-          cmake --build build/sunshine
-          exe=$(find build/sunshine -name sunshine.exe | head -1)
-          test -n "$exe"
-          mkdir -p "$name"; cp "$exe" "$name/"
-          ntldd -R "$exe" | grep -oiE '/ucrt64/bin/[^ ]+\.dll' | sort -u | while read -r d; do cp "$d" "$name/" 2>/dev/null || true; done
-          cp LICENSE README.md "$name/" 2>/dev/null || true
-          (cd "$name" && zip -r "../$name.zip" .)
-          ls -la "$name.zip"
+          set MSYSTEM=UCRT64
+          set CHERE_INVOKING=1
+          C:\msys64\usr\bin\bash.exe -lc "set -euo pipefail; \
+            ver=$(tr -d ' \t\r\n' < VERSION); \
+            name=ArcadeLauncher-Sunshine-$ver-win-x64; \
+            cmake -B build/sunshine -G Ninja -S vendor/sunshine -DCMAKE_BUILD_TYPE=Release -DBUILD_DOCS=OFF -DSUNSHINE_ENABLE_TRAY=OFF; \
+            cmake --build build/sunshine; \
+            exe=$(find build/sunshine -name sunshine.exe | head -1); \
+            test -n \"$exe\"; \
+            mkdir -p \"$name\"; cp \"$exe\" \"$name/\"; \
+            ntldd -R \"$exe\" | grep -oiE '/ucrt64/bin/[^ ]+\\.dll' | sort -u | while read -r d; do cp \"$d\" \"$name/\" 2>/dev/null || true; done; \
+            cp LICENSE README.md \"$name/\" 2>/dev/null || true; \
+            (cd \"$name\" && zip -r \"../$name.zip\" .); \
+            ls -la \"$name.zip\""
 
       - name: Publish Sunshine host asset
         uses: softprops/action-gh-release@v2
