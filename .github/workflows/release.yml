@@ -205,9 +205,15 @@ jobs:
           ver=$(tr -d ' \t\r\n' < VERSION)
           name=ArcadeLauncher-Sunshine-$ver-win-x64
           # BUILD_TESTS=OFF: the test suite isn't shipped and its heavy TUs
-          # (nvhttp/video/stream) OOM the 8 GB runner. -j 2 bounds peak memory.
+          # (nvhttp/video/stream) used to OOM the runner. VM 111 now has 16 GB,
+          # so -j 8 is a safe speed-up (the heavy TUs are BUILD_TESTS-gated off).
           cmake -B build/sunshine -G Ninja -S vendor/sunshine -DCMAKE_BUILD_TYPE=Release -DBUILD_DOCS=OFF -DBUILD_TESTS=OFF -DSUNSHINE_ENABLE_TRAY=OFF
-          cmake --build build/sunshine -j 2
+          # Sunshine's web UI bundles @codecov/vite-plugin, which on GITHUB_ACTIONS
+          # attempts a tokenless upload and exits non-zero on the 400 (no codecov
+          # repo / token), failing the build. Unset GITHUB_ACTIONS/CI so the plugin
+          # falls back to its Local provider and skips the upload. The Linux leg is
+          # already immune (podman doesn't pass host env into the container).
+          env -u GITHUB_ACTIONS -u CI cmake --build build/sunshine -j 8
           exe=$(find build/sunshine -name sunshine.exe | head -1)
           test -n "$exe"
           mkdir -p "$name"; cp "$exe" "$name/"
