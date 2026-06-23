@@ -37,7 +37,23 @@ void set_str(Value& o, const char* k, const std::string& v) {
   if (!v.empty()) o.set(k, Value::string(v));
 }
 
+// A storefront/protocol launch target ("steam://…", "com.epicgames.launcher://…") rather than a
+// runnable file. We treat any "scheme://" as a URI to hand to the OS opener.
+bool is_uri_target(const std::string& cmd) {
+  return cmd.find("://") != std::string::npos;
+}
+
 }  // namespace
+
+std::string host_launch_command(const std::string& cmd) {
+  if (cmd.empty() || !is_uri_target(cmd)) return cmd;  // desktop app or a real exe — run as-is
+#ifdef _WIN32
+  // `start` needs an empty "" title arg first, else a quoted URI is taken as the window title.
+  return "cmd /C start \"\" \"" + cmd + "\"";
+#else
+  return "xdg-open \"" + cmd + "\"";
+#endif
+}
 
 std::string serialize_apps_json(const std::vector<HostApp>& apps) {
   Value root = Value::object();

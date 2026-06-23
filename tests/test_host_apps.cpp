@@ -12,6 +12,7 @@
 
 #include "host/host_apps.h"
 #include "host/sunshine_backend.h"
+#include "host/sunshine_detect.h"
 
 using namespace ase::host;
 
@@ -153,6 +154,51 @@ static void test_launch_args() {
   CHECK(build_launch_args("").empty(), "no apps path -> no args");
 }
 
+// Only the system Sunshine path our resolver tries on *this* platform "exists".
+static bool only_system(const std::string& p) {
+  const std::string n =
+#ifdef _WIN32
+      "\\Sunshine\\sunshine.exe";
+#else
+      "/sunshine";
+#endif
+  return p.size() >= n.size() && p.compare(p.size() - n.size(), n.size(), n) == 0;
+}
+
+static void test_system_sunshine() {
+  // The candidate list is non-empty on every platform (env-derived dirs + well-known prefixes),
+  // and every entry points at a Sunshine binary.
+  const auto candidates = system_sunshine_candidates();
+  CHECK(!candidates.empty(), "system candidates are enumerated");
+  for (const auto& c : candidates) {
+    CHECK(c.find("sunshine") != std::string::npos, "candidate names the sunshine binary");
+  }
+  // Resolution picks the first existing candidate, and reports none when nothing is on disk.
+  CHECK(!resolve_system_sunshine(only_system).empty(), "finds a system Sunshine when one exists");
+  CHECK(resolve_system_sunshine(never).empty(), "no system Sunshine -> empty");
+}
+
+static void test_host_launch_command() {
+  // A real exe path (no scheme) and the desktop placeholder pass through untouched.
+  CHECK(host_launch_command("C:/Games/halo.exe") == "C:/Games/halo.exe", "exe path unchanged");
+  CHECK(host_launch_command("").empty(), "empty (desktop app) stays empty");
+
+  // Storefront URIs get wrapped in the host OS opener so Sunshine can launch them.
+  const std::string steam = host_launch_command("steam://rungameid/220");
+  const std::string epic = host_launch_command("com.epicgames.launcher://apps/x?action=launch");
+  CHECK(steam.find("steam://rungameid/220") != std::string::npos, "steam uri preserved in wrap");
+  CHECK(epic.find("com.epicgames.launcher://") != std::string::npos, "epic uri preserved in wrap");
+  CHECK(steam != "steam://rungameid/220", "steam uri is actually wrapped, not passed through");
+#ifdef _WIN32
+  CHECK(steam.rfind("cmd /C start \"\" \"", 0) == 0, "windows wraps with start + empty title");
+#else
+  CHECK(steam.rfind("xdg-open \"", 0) == 0, "posix wraps with xdg-open");
+#endif
+  // Wrapping is deterministic, so a re-sync of the same URI produces the same cmd (no spurious
+  // "updated" in the host.syncApps diff).
+  CHECK(host_launch_command("steam://rungameid/220") == steam, "same uri -> same wrap (diff-stable)");
+}
+
 int main() {
   test_serialize_parse_roundtrip();
   test_parse_tolerant();
@@ -160,6 +206,8 @@ int main() {
   test_diff();
   test_resolve_binary();
   test_launch_args();
+  test_host_launch_command();
+  test_system_sunshine();
 
   if (g_failures == 0) {
     std::printf("all host_apps tests passed\n");

@@ -49,6 +49,15 @@ std::string default_apps_path();
 std::vector<HostApp> read_apps(const std::string& path);
 bool write_apps(const std::string& path, const std::vector<HostApp>& apps);
 
+// Resolve a launcher-published launch target into a command Sunshine can actually exec on THIS
+// host. A storefront protocol URI (`steam://…`, `com.epicgames.launcher://…` — anything with a
+// `scheme://`) is not a runnable program, so it is wrapped in the host OS's URI opener
+// (Windows: `cmd /C start "" "<uri>"`; else `xdg-open "<uri>"`). With Sunshine's default
+// `auto-detach`, the opener exits immediately and the stream stays up while the storefront brings
+// the game online — exactly how Steam/Epic titles are streamed. A plain exe path is returned
+// unchanged. Pure; the host-OS branch is compile-time. Idempotent for non-URI input.
+std::string host_launch_command(const std::string& cmd);
+
 // Diff result for host.syncApps — how a publish changed the catalog (by app name).
 struct SyncDiff {
   int added = 0;

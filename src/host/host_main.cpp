@@ -34,7 +34,9 @@ static std::vector<host::HostApp> games_from_params(const Value& params) {
     host::HostApp a;
     a.name = g.get_str("name");
     if (a.name.empty()) continue;
-    a.cmd = g.get_str("cmd");
+    // Storefront URIs (Steam/Epic) aren't runnable programs — wrap them in the host OS's opener so
+    // Sunshine can actually launch the title when this PC is streamed (see host_launch_command).
+    a.cmd = host::host_launch_command(g.get_str("cmd"));
     a.imagePath = g.get_str("image", g.get_str("imagePath"));
     a.workingDir = g.get_str("workingDir", g.get_str("working-dir"));
     a.output = g.get_str("output");
@@ -56,29 +58,39 @@ static Value app_to_json(const host::HostApp& a) {
 }
 
 static void register_host_methods(ipc::Server& s, std::shared_ptr<host::SunshineBackend> backend) {
-  // host.status -> capability/state snapshot. `installed` = the bundled Sunshine binary is present;
-  // `running` = our managed child is up; `configured` = an apps catalog exists; `appsCount` from it.
+  // host.status -> capability/state snapshot.
+  //   installed = a Sunshine is available to host (bundled/system binary OR one already running) →
+  //               the launcher needn't download its sidecar.
+  //   running   = a Sunshine host is active (our child OR an adopted external instance).
+  //   managed   = WE started the active host (so we can stop it). `running && !managed` ⇒ the user's
+  //               own Sunshine, which we adopt but never stop — the UI shows it as external.
   s.on("host.status", [backend](const Value&, std::string&, std::string&) {
     const auto apps = host::read_apps(backend->apps_path());
+    const bool managed = backend->running();
+    const bool active = backend->host_active();
     Value r = Value::object();
-    r.set("installed", Value::boolean(backend->bundled()));
-    r.set("running", Value::boolean(backend->running()));
+    r.set("installed", Value::boolean(backend->bundled() || active));
+    r.set("running", Value::boolean(active));
+    r.set("managed", Value::boolean(managed));
     r.set("configured", Value::boolean(!apps.empty()));
     r.set("gpuCapable", Value::boolean(true));
     r.set("appsCount", Value::number(static_cast<double>(apps.size())));
     return r;
   });
 
-  // host.enable {on} -> start/stop the bundled Sunshine child.
+  // host.enable {on} -> start/stop hosting. start() adopts an already-running Sunshine; stop() only
+  // ends our own managed child (an adopted external instance keeps running).
   s.on("host.enable", [backend](const Value& params, std::string& code, std::string& msg) {
     const bool on = params.get_bool("on", false);
     bool ok = on ? backend->start(msg) : backend->stop(msg);
     if (!ok) {
-      code = backend->bundled() ? "internal" : "not_installed";
+      // "internal" only if we actually had something to start (a binary, or a live instance);
+      // otherwise it's genuinely not installed and the launcher should fetch the sidecar.
+      code = (backend->bundled() || backend->host_active()) ? "internal" : "not_installed";
       return Value::null();
     }
     Value r = Value::object();
-    r.set("running", Value::boolean(backend->running()));
+    r.set("running", Value::boolean(backend->host_active()));
     return r;
   });
 

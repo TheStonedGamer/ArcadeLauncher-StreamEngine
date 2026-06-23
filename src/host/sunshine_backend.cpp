@@ -5,6 +5,7 @@
 #include <filesystem>
 
 #include "host/host_apps.h"
+#include "host/sunshine_detect.h"
 
 #ifdef _WIN32
   #ifndef WIN32_LEAN_AND_MEAN
@@ -72,6 +73,9 @@ std::string current_exe_dir() {
 SunshineBackend::SunshineBackend(std::string appsPath) : appsPath_(std::move(appsPath)) {
   const char* env = std::getenv("ARCADE_SUNSHINE");
   binary_ = resolve_sunshine_binary(current_exe_dir(), env ? env : "", fs_exists);
+  // No bundled sidecar? Adopt a system-installed Sunshine so we start the user's own copy instead
+  // of forcing a download. (A Sunshine that's merely *running* is handled live in start().)
+  if (binary_.empty()) binary_ = resolve_system_sunshine(fs_exists);
 }
 
 SunshineBackend::SunshineBackend() : SunshineBackend(default_apps_path()) {}
@@ -99,10 +103,20 @@ bool SunshineBackend::running() {
 #endif
 }
 
+bool SunshineBackend::host_active() {
+  // Our own child takes precedence and avoids the (cheap, but non-zero) live port probe.
+  return running() || sunshine_is_listening();
+}
+
 bool SunshineBackend::start(std::string& msg) {
   if (running()) return true;
+  // A Sunshine is already up (the user runs their own, or a previous session we didn't reap).
+  // Adopt it: starting a second instance would just collide on Sunshine's fixed ports and fail.
+  // We deliberately do NOT record it as our managed child, so stop() leaves it running.
+  if (sunshine_is_listening()) return true;
   if (binary_.empty()) {
-    msg = "no bundled Sunshine binary found (set ARCADE_SUNSHINE or ship sunshine beside the engine)";
+    msg = "no Sunshine found (none installed or running; set ARCADE_SUNSHINE, install Sunshine, "
+          "or ship sunshine beside the engine)";
     return false;
   }
   const std::vector<std::string> args = build_launch_args(appsPath_);

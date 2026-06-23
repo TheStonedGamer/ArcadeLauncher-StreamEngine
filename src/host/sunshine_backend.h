@@ -37,15 +37,22 @@ class SunshineBackend {
   SunshineBackend(const SunshineBackend&) = delete;
   SunshineBackend& operator=(const SunshineBackend&) = delete;
 
-  // Path to the bundled sunshine binary, or "" if none was found.
+  // Path to the resolved sunshine binary (bundled sidecar OR a system install), "" if none found.
   const std::string& binary_path() const { return binary_; }
+  // True when a startable Sunshine binary is available (so the launcher needn't download one).
   bool bundled() const { return !binary_.empty(); }
 
-  // Whether the managed child is currently running (we started it and it hasn't exited).
+  // Whether the managed child is currently running (we started it and it hasn't exited). This is
+  // the "managed" axis — true only for a Sunshine WE spawned, which is the only one we may stop.
   bool running();
 
-  // Start the child (idempotent — true if already running). False if no binary is bundled or the
-  // spawn failed (msg set).
+  // Whether a Sunshine host is active on this machine at all: our managed child OR an instance we
+  // adopt (one the user already had running). `running()` short-circuits the live port probe.
+  bool host_active();
+
+  // Start hosting (idempotent). If our child already runs, or another Sunshine is already
+  // listening, succeeds without spawning (we adopt the existing one rather than fight for its
+  // ports). Otherwise spawns the resolved binary. False if nothing is available to start (msg set).
   bool start(std::string& msg);
   // Stop the managed child (idempotent — true once it is not running).
   bool stop(std::string& msg);
