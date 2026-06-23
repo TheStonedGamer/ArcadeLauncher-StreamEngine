@@ -114,6 +114,16 @@ jobs:
     needs: release-windows
     runs-on: [self-hosted, prox-pve]
     steps:
+      - name: Reclaim root-owned leftovers from any interrupted prior run
+        shell: bash
+        run: |
+          # sunshine-linux's rootful `sudo podman` build only chowns its output
+          # back on the happy path. If a prior run was cancelled/failed mid-build,
+          # root-owned files survive in the shared workspace and actions/checkout
+          # below can't delete them (EACCES). The runner has passwordless sudo, so
+          # hand ownership back to the runner user before checkout cleans.
+          ws="${{ github.workspace }}"
+          [ -d "$ws" ] && sudo chown -R "$(id -u):$(id -g)" "$ws" 2>/dev/null || true
       - uses: actions/checkout@v4
         with:
           submodules: false
@@ -232,6 +242,14 @@ jobs:
     needs: release-windows
     runs-on: [self-hosted, prox-pve]
     steps:
+      - name: Reclaim root-owned leftovers from any interrupted prior run
+        shell: bash
+        run: |
+          # This job's own `sudo podman` build (below) only chowns its root-owned
+          # output back on success; a cancelled/failed prior run leaves root-owned
+          # files that actions/checkout can't clean (EACCES). Reclaim them first.
+          ws="${{ github.workspace }}"
+          [ -d "$ws" ] && sudo chown -R "$(id -u):$(id -g)" "$ws" 2>/dev/null || true
       - uses: actions/checkout@v4
         with:
           submodules: false
