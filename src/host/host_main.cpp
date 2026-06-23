@@ -9,10 +9,14 @@
 // whether the Sunshine binary is present — so the launcher's "My PCs" + hosting UI is functional now;
 // host.enable additionally starts/stops the child, which needs the binary bundled.
 #include <cstdio>
+#include <fstream>
+#include <functional>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
 
+#include "host/client_trust.h"
 #include "host/host_apps.h"
 #include "host/sunshine_backend.h"
 #include "ipc/ipc.h"
@@ -23,6 +27,35 @@
 namespace ase {
 
 using json::Value;
+
+// Whole-file text read ("" if the file is absent — the common case before Sunshine's first launch).
+static std::string read_text_file(const std::string& path) {
+  if (path.empty()) return "";
+  std::ifstream f(path, std::ios::binary);
+  if (!f) return "";
+  std::ostringstream ss;
+  ss << f.rdbuf();
+  return ss.str();
+}
+
+static bool write_text_file(const std::string& path, const std::string& data) {
+  if (path.empty()) return false;
+  std::ofstream f(path, std::ios::binary | std::ios::trunc);
+  if (!f) return false;
+  f << data;
+  return f.good();
+}
+
+// A stable 32-hex-char id for a Sunshine named_devices entry, derived from the cert so re-trusting
+// the same client yields the same uuid. Crypto-free on purpose: host mode must not depend on the
+// OpenSSL-gated net layer (this id is an opaque label, not security material).
+static std::string stable_uuid(const std::string& seed) {
+  const std::size_t a = std::hash<std::string>{}(seed);
+  const std::size_t b = std::hash<std::string>{}("ase-trust:" + seed);
+  char buf[33];
+  std::snprintf(buf, sizeof(buf), "%016zx%016zx", a, b);
+  return std::string(buf, 32);
+}
 
 // Convert a launcher-supplied games array ({name,cmd,image,workingDir,...}) into HostApp records.
 static std::vector<host::HostApp> games_from_params(const Value& params) {
@@ -123,22 +156,83 @@ static void register_host_methods(ipc::Server& s, std::shared_ptr<host::Sunshine
     return r;
   });
 
-  // host.pairAccept {pin} -> accept an inbound pairing PIN. Sunshine's PIN pairing is confirmed via
-  // its own web UI / pin endpoint; the engine does not own that flow yet.
-  s.on("host.pairAccept", [](const Value&, std::string& code, std::string& msg) {
-    code = "unsupported";
-    msg = "host PIN pairing is handled by Sunshine's own web UI; engine-side accept not wired yet";
-    return Value::null();
+  // host.trustClient {name, certPem} -> authorize a GameStream client WITHOUT a PIN by seeding its
+  // cert into Sunshine's state file (root.named_devices), which is exactly what a successful PIN pair
+  // persists. This is the host half of brokered zero-PIN auto-pairing (fix A): the launcher fetches
+  // the account's registered client certs and calls this for each BEFORE host.enable, so Sunshine
+  // trusts them when it loads its state on start. Idempotent (re-seeding the same cert is a no-op).
+  // Takes effect on the next Sunshine start — if one is already running it must be restarted to
+  // reload named_devices, reported via `restartRequired`.
+  s.on("host.trustClient", [backend](const Value& params, std::string& code, std::string& msg) {
+    const std::string certPem = params.get_str("certPem");
+    const std::string name = params.get_str("name", "ArcadeLauncher client");
+    if (certPem.empty()) {
+      code = "bad_request";
+      msg = "host.trustClient requires a non-empty certPem";
+      return Value::null();
+    }
+    const std::string statePath = host::host_state_path(backend->apps_path());
+    if (statePath.empty()) {
+      code = "internal";
+      msg = "no Sunshine state path (apps path unset)";
+      return Value::null();
+    }
+    const std::string current = read_text_file(statePath);
+    const bool already = host::has_trusted_client(current, certPem);
+    if (!already) {
+      const std::string next =
+          host::add_trusted_client(current, name, certPem, stable_uuid(certPem));
+      if (!write_text_file(statePath, next)) {
+        code = "internal";
+        msg = "could not write Sunshine state at " + statePath;
+        return Value::null();
+      }
+    }
+    Value r = Value::object();
+    r.set("trusted", Value::boolean(true));
+    r.set("alreadyTrusted", Value::boolean(already));
+    // Newly-seeded certs only load at Sunshine start; a live host must restart to honor them.
+    r.set("restartRequired", Value::boolean(!already && backend->running()));
+    return r;
   });
 
-  // host.deviceInfo -> identity for gateway registration (T12k-7/8). Cert fingerprint comes from the
-  // running Sunshine's credentials; not surfaced over the engine yet.
-  s.on("host.deviceInfo", [](const Value&, std::string&, std::string&) {
+  // Back-compat alias: the old name implied PIN handling, but the engine now authorizes by cert.
+  // Accepts the same {name, certPem}. Kept so an older launcher build doesn't 404.
+  s.on("host.pairAccept", [backend](const Value& params, std::string& code, std::string& msg) {
+    const std::string certPem = params.get_str("certPem");
+    if (certPem.empty()) {
+      code = "unsupported";
+      msg = "host.pairAccept now authorizes by cert — pass {name, certPem} (PIN pairing is unused)";
+      return Value::null();
+    }
+    const std::string statePath = host::host_state_path(backend->apps_path());
+    const std::string current = read_text_file(statePath);
+    if (!host::has_trusted_client(current, certPem)) {
+      const std::string next = host::add_trusted_client(
+          current, params.get_str("name", "ArcadeLauncher client"), certPem, stable_uuid(certPem));
+      if (!write_text_file(statePath, next)) {
+        code = "internal";
+        msg = "could not write Sunshine state at " + statePath;
+        return Value::null();
+      }
+    }
+    Value r = Value::object();
+    r.set("trusted", Value::boolean(true));
+    return r;
+  });
+
+  // host.deviceInfo -> identity for gateway registration (T12k-7/8) AND, for cert pre-authorization,
+  // this host's Sunshine server cert PEM. The client pins this cert (client.trustHost) so it trusts
+  // the host without the handshake's server-cert exchange. The cert is created by Sunshine on first
+  // launch at the engine-pinned path (host_cert_path); empty until then.
+  s.on("host.deviceInfo", [backend](const Value&, std::string&, std::string&) {
+    const std::string serverCertPem = read_text_file(host::host_cert_path(backend->apps_path()));
     Value r = Value::object();
     r.set("deviceId", Value::string(""));
     r.set("lanAddr", Value::string(""));
     r.set("meshAddr", Value::string(""));
     r.set("certFingerprint", Value::string(""));
+    r.set("serverCertPem", Value::string(serverCertPem));
     return r;
   });
 }

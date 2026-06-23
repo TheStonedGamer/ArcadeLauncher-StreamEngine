@@ -21,7 +21,17 @@ std::string resolve_sunshine_binary(const std::string& engineDir, const std::str
 
 // Build the child argv (after the binary) to launch Sunshine against an apps file. Sunshine accepts
 // `key=value` config overrides on the command line; `file_apps=<path>` makes it read our catalog.
+// We also pin Sunshine's state file and its server cert/key to fixed paths in the same dir
+// (see host_state_path/host_cert_path) so the engine can (a) seed trusted client certs into the
+// state file for zero-PIN auto-pairing and (b) read back the server cert for host.deviceInfo.
 std::vector<std::string> build_launch_args(const std::string& appsPath);
+
+// Engine-pinned Sunshine paths, all siblings of `appsPath` (the launcher-controlled config dir).
+// These MUST match what build_launch_args passes so the trust/deviceInfo handlers read & write the
+// exact files Sunshine uses.
+std::string host_state_path(const std::string& appsPath);  // file_state — trusted clients live here
+std::string host_cert_path(const std::string& appsPath);   // cert — Sunshine's server cert PEM
+std::string host_pkey_path(const std::string& appsPath);   // pkey — Sunshine's server private key
 
 // Directory containing the running engine executable ("" if it can't be determined). Used to find the
 // sunshine binary shipped alongside the engine.

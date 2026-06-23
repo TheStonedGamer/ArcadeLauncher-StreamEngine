@@ -2,3 +2,5 @@
 /build-linux/
 /build-skeleton/
 /dist/
+/build-bin/
+/build-test/

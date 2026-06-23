@@ -282,6 +282,61 @@ static void register_client_methods(ipc::Server& s) {
 #endif
   });
 
+  // client.identity -> this client's stable identity for cert pre-authorization. Returns the
+  // self-signed client cert PEM (and uniqueId) the host must trust. The launcher publishes this PEM
+  // to the account registry so every host the user owns can seed it into Sunshine (host.trustClient)
+  // — the client half of brokered zero-PIN auto-pairing (fix A). Loads/creates the persistent
+  // identity, so the cert returned is the exact one presented on every HTTPS request.
+  s.on("client.identity", [](const Value&, std::string& code, std::string& msg) -> Value {
+#ifdef ASE_HAVE_OPENSSL
+    net::ClientIdentity identity;
+    std::string uniqueId;
+    if (!store().load_or_create_identity(identity, uniqueId)) {
+      code = "internal";
+      msg = "could not load or generate the persistent client identity";
+      return Value::null();
+    }
+    Value r = Value::object();
+    r.set("clientCertPem", Value::string(identity.certPem));
+    r.set("uniqueId", Value::string(uniqueId));
+    return r;
+#else
+    code = "internal";
+    msg = "engine built without OpenSSL (ASE_WITH_OPENSSL=OFF); client identity unavailable";
+    return Value::null();
+#endif
+  });
+
+  // client.trustHost {host, name, serverCertPem} -> pin a host's server cert WITHOUT the pairing
+  // handshake. The launcher fetches the host's serverCertPem (host.deviceInfo, via the account
+  // registry) and calls this before client.start, so connect_paired_host finds a pinned cert and
+  // client.start no longer fails not_paired. This is the client half of zero-PIN auto-pairing; it
+  // mirrors what a successful client.pair persists, minus the PIN-gated cert exchange.
+  s.on("client.trustHost", [](const Value& params, std::string& code, std::string& msg) -> Value {
+#ifdef ASE_HAVE_OPENSSL
+    const std::string host = params.get_str("host");
+    const std::string serverCertPem = params.get_str("serverCertPem");
+    if (host.empty() || serverCertPem.empty()) {
+      code = "bad_params";
+      msg = "client.trustHost requires non-empty 'host' and 'serverCertPem'";
+      return Value::null();
+    }
+    if (!store().upsert_host({host, params.get_str("name"), serverCertPem})) {
+      code = "internal";
+      msg = "could not persist the pinned host cert";
+      return Value::null();
+    }
+    Value r = Value::object();
+    r.set("trusted", Value::boolean(true));
+    return r;
+#else
+    (void)params;
+    code = "internal";
+    msg = "engine built without OpenSSL (ASE_WITH_OPENSSL=OFF); host pinning unavailable";
+    return Value::null();
+#endif
+  });
+
   // client.start {host, app, settings, embedWindow?} -> begin streaming. Validates/normalizes
   // `settings` (fails fast with bad_params), connects to the paired host (pins its cert, learns the
   // HTTPS port), resolves `app` (numeric appid or name via the app list), negotiates the remote-input

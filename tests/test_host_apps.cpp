@@ -10,9 +10,11 @@
 #include <string>
 #include <vector>
 
+#include "host/client_trust.h"
 #include "host/host_apps.h"
 #include "host/sunshine_backend.h"
 #include "host/sunshine_detect.h"
+#include "ipc/json.h"
 
 using namespace ase::host;
 
@@ -149,8 +151,27 @@ static void test_resolve_binary() {
 
 static void test_launch_args() {
   const auto args = build_launch_args("/data/sunshine_apps.json");
-  CHECK(args.size() == 1, "one config override arg");
-  if (!args.empty()) CHECK(args[0] == "file_apps=/data/sunshine_apps.json", "points Sunshine at the apps file");
+  CHECK(args.size() == 6, "apps + log path/level + state/cert/pkey pins");
+  if (args.size() == 6) {
+    CHECK(args[0] == "file_apps=/data/sunshine_apps.json", "points Sunshine at the apps file");
+    // log_path / state / cert / pkey all sit beside the apps file (parent dir), platform-normalized.
+    const std::filesystem::path dir("/data");
+    CHECK(args[1] == "log_path=" + (dir / "sunshine.log").string(), "Sunshine log beside apps file");
+    CHECK(args[2] == "min_log_level=1", "debug-level Sunshine logging");
+    CHECK(args[3] == "file_state=" + (dir / "sunshine_state.json").string(),
+          "pins the state file (trusted clients)");
+    CHECK(args[4] == "cert=" + (dir / "cert.pem").string(), "pins the server cert");
+    CHECK(args[5] == "pkey=" + (dir / "pkey.pem").string(), "pins the server key");
+  }
+  // The path helpers agree with the pinned args (host.deviceInfo/trustClient read the same files).
+  CHECK(host_state_path("/data/sunshine_apps.json") ==
+            (std::filesystem::path("/data") / "sunshine_state.json").string(),
+        "host_state_path matches the pin");
+  CHECK(host_cert_path("/data/sunshine_apps.json") ==
+            (std::filesystem::path("/data") / "cert.pem").string(),
+        "host_cert_path matches the pin");
+  CHECK(host_state_path("").empty() && host_cert_path("").empty() && host_pkey_path("").empty(),
+        "no apps path -> empty helper paths");
   CHECK(build_launch_args("").empty(), "no apps path -> no args");
 }
 
@@ -199,6 +220,50 @@ static void test_host_launch_command() {
   CHECK(host_launch_command("steam://rungameid/220") == steam, "same uri -> same wrap (diff-stable)");
 }
 
+// Find root.named_devices[i].cert values in a state JSON (test-only reader).
+static std::vector<std::string> trusted_certs(const std::string& stateJson) {
+  std::vector<std::string> out;
+  auto doc = ase::json::parse(stateJson);
+  if (!doc) return out;
+  const ase::json::Value* root = doc->find("root");
+  if (!root) return out;
+  const ase::json::Value* devices = root->find("named_devices");
+  if (!devices || !devices->is_array()) return out;
+  for (const auto& d : devices->arr) out.push_back(d.get_str("cert"));
+  return out;
+}
+
+static void test_trust_client_from_empty() {
+  // Seeding into no prior state yields a well-formed tree with exactly our client.
+  const std::string s = add_trusted_client("", "PC-B", "CERT_B", "uuid-1");
+  const auto certs = trusted_certs(s);
+  CHECK(certs.size() == 1 && certs[0] == "CERT_B", "fresh state holds the seeded client cert");
+  CHECK(has_trusted_client(s, "CERT_B"), "has_trusted_client sees the seeded cert");
+  CHECK(!has_trusted_client(s, "CERT_OTHER"), "unknown cert is not trusted");
+  CHECK(!has_trusted_client("", "CERT_B"), "empty state trusts nothing");
+}
+
+static void test_trust_client_idempotent() {
+  // Re-seeding the same cert (every host start does) must not duplicate it.
+  std::string s = add_trusted_client("", "PC-B", "CERT_B", "uuid-1");
+  s = add_trusted_client(s, "PC-B", "CERT_B", "uuid-2");
+  CHECK(trusted_certs(s).size() == 1, "same cert is not added twice");
+}
+
+static void test_trust_client_appends_and_preserves() {
+  // Adding a second client keeps the first, and pre-existing root fields survive.
+  std::string s = add_trusted_client(R"({"root":{"uniqueid":"HOST-UID","named_devices":[]}})",
+                                     "PC-B", "CERT_B", "uuid-1");
+  s = add_trusted_client(s, "PC-C", "CERT_C", "uuid-2");
+  const auto certs = trusted_certs(s);
+  CHECK(certs.size() == 2, "second distinct client is appended");
+  CHECK(has_trusted_client(s, "CERT_B") && has_trusted_client(s, "CERT_C"), "both clients trusted");
+  // root.uniqueid must be preserved (Sunshine keys its own identity off it).
+  auto doc = ase::json::parse(s);
+  CHECK(doc && doc->find("root") && doc->find("root")->get_str("uniqueid") == "HOST-UID",
+        "existing root.uniqueid is preserved");
+}
+
 int main() {
   test_serialize_parse_roundtrip();
   test_parse_tolerant();
@@ -208,6 +273,9 @@ int main() {
   test_launch_args();
   test_host_launch_command();
   test_system_sunshine();
+  test_trust_client_from_empty();
+  test_trust_client_idempotent();
+  test_trust_client_appends_and_preserves();
 
   if (g_failures == 0) {
     std::printf("all host_apps tests passed\n");

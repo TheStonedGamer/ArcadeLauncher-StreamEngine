@@ -48,9 +48,41 @@ std::string resolve_sunshine_binary(const std::string& engineDir, const std::str
   return "";
 }
 
+std::string host_state_path(const std::string& appsPath) {
+  if (appsPath.empty()) return "";
+  return (std::filesystem::path(appsPath).parent_path() / "sunshine_state.json").string();
+}
+
+std::string host_cert_path(const std::string& appsPath) {
+  if (appsPath.empty()) return "";
+  return (std::filesystem::path(appsPath).parent_path() / "cert.pem").string();
+}
+
+std::string host_pkey_path(const std::string& appsPath) {
+  if (appsPath.empty()) return "";
+  return (std::filesystem::path(appsPath).parent_path() / "pkey.pem").string();
+}
+
 std::vector<std::string> build_launch_args(const std::string& appsPath) {
   std::vector<std::string> args;
-  if (!appsPath.empty()) args.push_back("file_apps=" + appsPath);
+  if (!appsPath.empty()) {
+    args.push_back("file_apps=" + appsPath);
+    // Enable Sunshine's own logging at a known location and useful verbosity so
+    // host-side streaming failures are diagnosable. Sunshine reads key=value
+    // overrides from the CLI: min_log_level is an int (0=verbose, 1=debug,
+    // 2=info default); log_path is the log file. We sit it beside the apps file
+    // (the per-user config dir the launcher controls), separate from the
+    // launcher's own sunshine-host.log which only captures this driver's stdout.
+    const auto logPath = std::filesystem::path(appsPath).parent_path() / "sunshine.log";
+    args.push_back("log_path=" + logPath.string());
+    args.push_back("min_log_level=1");
+    // Pin the state file + server cert/key to engine-known paths. Sunshine creates the cert/key on
+    // first launch if absent and reads trusted client certs from the state file's named_devices on
+    // every start — which is how the engine seeds account clients for zero-PIN auto-pairing (fix A).
+    args.push_back("file_state=" + host_state_path(appsPath));
+    args.push_back("cert=" + host_cert_path(appsPath));
+    args.push_back("pkey=" + host_pkey_path(appsPath));
+  }
   return args;
 }
 
@@ -128,8 +160,10 @@ bool SunshineBackend::start(std::string& msg) {
   PROCESS_INFORMATION pi{};
   std::vector<char> mutableCmd(cmd.begin(), cmd.end());
   mutableCmd.push_back('\0');
-  if (!CreateProcessA(nullptr, mutableCmd.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si,
-                      &pi)) {
+  // CREATE_NO_WINDOW: Sunshine is a console subsystem binary; without this it
+  // pops a console window in the foreground every time the host engine starts it.
+  if (!CreateProcessA(nullptr, mutableCmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
+                      nullptr, &si, &pi)) {
     msg = "CreateProcess failed (err " + std::to_string(GetLastError()) + ")";
     return false;
   }
