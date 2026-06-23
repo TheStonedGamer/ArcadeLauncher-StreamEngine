@@ -185,10 +185,15 @@ jobs:
   # drop-in. Pinned to a specific upstream tag for reproducibility. This also fixes a latent bug:
   # the old source-built zip shipped sunshine.exe WITHOUT assets/web — a broken host.
   #
-  # LINUX: still builds the fork inside ubuntu:24.04 via podman (CT 130 host is GCC 12; Sunshine
-  # needs GCC 13+ for std::format). Node 22 from NodeSource for the web UI; the `--debug` exit-1 is
-  # Windows-only so this leg stays green. Separate jobs (only `needs: release-windows` so the
-  # release exists): a failure here does NOT remove the already-published engine assets.
+  # LINUX: same idea, but upstream ships no portable Linux zip — only .deb/.rpm/AppImage. The .deb
+  # bakes an absolute asset path (/usr/share/sunshine) so it is NOT relocatable. Upstream's
+  # `sunshine.AppImage` IS: a single self-mounting executable that bundles sunshine + assets/web +
+  # libs and forwards argv to the inner binary. The engine execv's it directly as `sunshine`
+  # (host/sunshine_backend.cpp), so we ship the AppImage renamed to `sunshine` at the zip root.
+  # This also retires the slow `sudo podman` GCC-13 source build (CT 130 host is GCC 12) and the
+  # root-owned-workspace landmine it left. NOTE: AppImages need libfuse2 on the host PC at runtime.
+  # Separate jobs (only `needs: release-windows` so the release exists): a failure here does NOT
+  # remove the already-published engine assets.
   sunshine-windows:
     needs: release-windows
     runs-on: [self-hosted, Windows, X64, arcade-win10]
@@ -241,69 +246,44 @@ jobs:
     needs: release-windows
     runs-on: [self-hosted, prox-pve]
     steps:
-      - name: Reclaim root-owned leftovers from any interrupted prior run
+      - name: Reclaim root-owned leftovers from the retired podman build
         shell: bash
         run: |
-          # This job's own `sudo podman` build (below) only chowns its root-owned
-          # output back on success; a cancelled/failed prior run leaves root-owned
-          # files that actions/checkout can't clean (EACCES). Reclaim them first.
+          # This job no longer builds Sunshine (it ships upstream's AppImage), but
+          # earlier runs used a rootful `sudo podman` build that could leave
+          # root-owned files in the shared workspace which actions/checkout can't
+          # clean (EACCES). Reclaim any such leftovers first; a no-op once gone.
           ws="${{ github.workspace }}"
           [ -d "$ws" ] && sudo chown -R "$(id -u):$(id -g)" "$ws" 2>/dev/null || true
       - uses: actions/checkout@v4
         with:
           submodules: false
-      - name: Init Sunshine submodule (recursive — full host tree)
-        shell: bash
-        run: |
-          git config --global --add safe.directory '*'
-          git submodule update --init --recursive vendor/sunshine
 
-      - name: Build Sunshine in ubuntu:24.04 (GCC 13+) via podman + zip
+      - name: Repackage upstream Sunshine AppImage as the host asset
         id: pkg
         shell: bash
         run: |
           set -euo pipefail
           ver=$(tr -d ' \t\r\n' < VERSION)
           name="ArcadeLauncher-Sunshine-$ver-linux-x64"
-          # The runner (CT 130) ships GCC 12, but Sunshine needs C++20 std::format
-          # (GCC 13+). Build inside ubuntu:24.04 (GCC 13) via podman, which is
-          # pre-provisioned on the runner. sudo podman = rootful (the runner has
-          # passwordless sudo); chown the root-owned build tree back afterwards so
-          # the next checkout can clean it. BUILD_TESTS=OFF (not shipped, heavy
-          # TUs OOM the box); -j 2 bounds peak memory; CUDA off (no toolkit).
-          sudo podman run --rm -v "$PWD":/src:rw -w /src docker.io/library/ubuntu:24.04 bash -lc '
-            set -eo pipefail
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq
-            # ubuntu:24.04 ships Node 18; the Sunshine web UI (vite 6 / vue-i18n)
-            # needs Node 20+. Pull Node 22 from NodeSource (nodejs bundles npm).
-            apt-get install -y -qq curl ca-certificates gnupg
-            curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-            apt-get install -y -qq nodejs cmake ninja-build build-essential pkg-config git \
-              python3-jinja2 python3-setuptools glslang-tools libvulkan-dev libpipewire-0.3-dev \
-              libssl-dev libavdevice-dev libboost-filesystem-dev libboost-locale-dev \
-              libboost-log-dev libboost-program-options-dev libcap-dev libcurl4-openssl-dev \
-              libdrm-dev libgbm-dev libevdev-dev libminiupnpc-dev libnotify-dev libnuma-dev libopus-dev \
-              libpulse-dev libva-dev libvdpau-dev libwayland-dev libx11-dev libxcb-shm0-dev \
-              libxcb-xfixes0-dev libxcb1-dev libxfixes-dev libxrandr-dev libxtst-dev
-            git config --global --add safe.directory "*"
-            rm -rf build/sunshine
-            cmake -B build/sunshine -G Ninja -S vendor/sunshine -DCMAKE_BUILD_TYPE=Release \
-              -DBUILD_DOCS=OFF -DBUILD_TESTS=OFF -DSUNSHINE_ENABLE_TRAY=OFF -DSUNSHINE_ENABLE_CUDA=OFF
-            cmake --build build/sunshine -j 2
-          '
-          sudo chown -R "$(id -u):$(id -g)" build
-          exe=$(find build/sunshine -name sunshine -type f | head -1)
-          test -n "$exe"
-          mkdir -p "$name"
-          cp "$exe" "$name/sunshine"
-          strip "$name/sunshine" || true
-          cp LICENSE README.md "$name/" 2>/dev/null || true
-          # Linux Sunshine links system libs (libssl/libopus/etc.) — the launcher's
-          # host PC must have them (declared as package deps in a real .deb).
-          # zip runs on the host (not the container); self-heal if the runner lacks it.
+          # Upstream's sunshine.AppImage is a self-contained, relocatable bundle
+          # (sunshine + assets/web + libs). The engine execv's it directly as the
+          # `sunshine` binary at the zip root, so rename + chmod +x and zip it.
+          # Pinned upstream stable; bump deliberately, do not float to "latest".
+          # NOTE: the host PC needs libfuse2 to run an AppImage.
+          upstream="v2026.516.143833"
+          url="https://github.com/LizardByte/Sunshine/releases/download/$upstream/sunshine.AppImage"
           command -v zip >/dev/null || sudo apt-get install -y -qq zip
+          rm -rf "$name" "$name.zip"
+          mkdir -p "$name"
+          curl -fsSL -o "$name/sunshine" "$url"
+          chmod +x "$name/sunshine"
+          cp LICENSE README.md "$name/" 2>/dev/null || true
           (cd "$name" && zip -r "../$name.zip" .)
+          # Guard: binary present at zip root (proven on CT 130: entry `sunshine`,
+          # mode 0755, exec bit preserved, forward-slash separators).
+          zip -sf "$name.zip" | grep -qE '^\s*sunshine$'
+          ls -la "$name.zip"
           echo "zip=$name.zip" >> "$GITHUB_OUTPUT"
 
       - name: Publish Sunshine host asset
