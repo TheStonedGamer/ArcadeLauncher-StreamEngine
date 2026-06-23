@@ -171,18 +171,24 @@ jobs:
           fail_on_unmatched_files: true
 
   # ---------------------------------------------------------------------------------------------
-  # Host sidecar (Sunshine fork). The launcher does NOT bundle this in its installer — it fetches
-  # it on first "Stream from this PC" enable (launcher streaming/host_fetch.rs). These jobs build
-  # the vendored Sunshine fork and publish it as `ArcadeLauncher-Sunshine-<ver>-<os>-x64.zip` —
-  # a ZIP on BOTH platforms so the launcher reuses its zip-slip-safe extractor (no tar dep).
+  # Host sidecar (Sunshine). The launcher does NOT bundle this in its installer — it fetches it on
+  # first "Stream from this PC" enable (launcher streaming/host_fetch.rs) and publishes it as
+  # `ArcadeLauncher-Sunshine-<ver>-<os>-x64.zip` — a ZIP on BOTH platforms so the launcher reuses
+  # its zip-slip-safe extractor (no tar dep).
   #
-  # VALIDATED on the runners 2026-06-22 (both legs build a working binary). The Windows leg builds
-  # under MSYS2 UCRT64 (a different toolchain than the MSVC engine build above) and requires MSYS2
-  # at C:\msys64 on the runner; build TESTS off + -j2 to stay under VM 111's RAM (default parallel
-  # OOMs cc1plus on the test TUs). The Linux leg builds inside ubuntu:24.04 via podman because the
-  # CT 130 host is GCC 12 (Sunshine needs GCC 13+ for std::format); Node 22 from NodeSource for the
-  # web UI. Separate jobs (only `needs: release-windows` so the release exists): a failure here does
-  # NOT remove the already-published engine assets.
+  # WINDOWS: we no longer build the vendored Sunshine fork here. Its web-UI (vite) build is a
+  # recurring CI landmine — the @codecov/vite-plugin tokenless upload AND a vite `--debug`
+  # post-build exit-1 that only reproduces under MSYS2/Windows (Linux builds the same tree fine).
+  # The fork carries ZERO functional changes over upstream LizardByte/Sunshine (only the codecov
+  # drop, which this leg no longer needs), so upstream's complete, self-contained portable build
+  # (sunshine.exe + assets/web + shaders + zlib1.dll; everything else static-linked) is a true
+  # drop-in. Pinned to a specific upstream tag for reproducibility. This also fixes a latent bug:
+  # the old source-built zip shipped sunshine.exe WITHOUT assets/web — a broken host.
+  #
+  # LINUX: still builds the fork inside ubuntu:24.04 via podman (CT 130 host is GCC 12; Sunshine
+  # needs GCC 13+ for std::format). Node 22 from NodeSource for the web UI; the `--debug` exit-1 is
+  # Windows-only so this leg stays green. Separate jobs (only `needs: release-windows` so the
+  # release exists): a failure here does NOT remove the already-published engine assets.
   sunshine-windows:
     needs: release-windows
     runs-on: [self-hosted, Windows, X64, arcade-win10]
@@ -190,23 +196,28 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: false
-      - name: Init Sunshine submodule (recursive — full host tree)
-        shell: bash
+      - name: Download + extract upstream Sunshine portable build
+        shell: powershell
         run: |
-          git config --global --add safe.directory '*'
-          # Sunshine's nested docs submodule (doxygen-awesome-css) blows past
-          # Windows MAX_PATH; long paths let git write its pack/.keep files.
-          git config --global core.longpaths true
-          git submodule update --init --recursive vendor/sunshine
+          $ErrorActionPreference = "Stop"
+          $ProgressPreference = "SilentlyContinue"   # avoids Invoke-WebRequest's slow progress UI
+          # Pinned upstream stable. Bump deliberately; do not float to "latest".
+          $upstream = "v2026.516.143833"
+          $url = "https://github.com/LizardByte/Sunshine/releases/download/$upstream/Sunshine-Windows-AMD64-portable.zip"
+          Invoke-WebRequest -Uri $url -OutFile portable.zip
+          if (Test-Path sun-extract) { Remove-Item -Recurse -Force sun-extract }
+          Expand-Archive -Path portable.zip -DestinationPath sun-extract -Force
+          Copy-Item LICENSE,README.md sun-extract\Sunshine\ -ErrorAction SilentlyContinue
 
-      - name: Build Sunshine (MSYS2 UCRT64) + collect DLL closure + zip
-        # UCRT64 toolchain is pre-provisioned on the arcade-win10 runner
-        # (MSYS2 at C:\msys64, installed via the PVE guest agent), so CI just
-        # drives the existing bash.exe — no in-CI toolchain install.
-        # Use a native MSYS2 bash login shell as the step shell (NOT cmd):
-        # cmd has no `\` line-continuation, so the old `bash -lc "...\"` form
-        # silently truncated to its first line. MSYSTEM=UCRT64 + CHERE_INVOKING
-        # put the UCRT64 toolchain on PATH and keep the repo as the cwd.
+      - name: Repackage with MSYS2 zip (forward-slash entries) as the host asset
+        # Re-zip with MSYS2 `zip`, NOT Compress-Archive / .NET ZipFile: on the runner's
+        # .NET Framework 4.x BOTH write BACKSLASH path separators, producing a non-spec
+        # zip whose nested entries (assets/web/...) the launcher's Rust extractor would
+        # treat as literal filenames — shipping a Sunshine with no web UI. MSYS2 `zip`
+        # writes proper forward slashes (proven on VM 111: 82 web files, 0 backslash
+        # entries, sunshine.exe at root). Upstream nests under a top-level Sunshine\
+        # folder; zipping from inside it flattens sunshine.exe back to the zip root —
+        # the same contract host_fetch expects.
         shell: "C:\\msys64\\usr\\bin\\bash.exe --login -euo pipefail {0}"
         env:
           MSYSTEM: UCRT64
@@ -214,22 +225,10 @@ jobs:
         run: |
           ver=$(tr -d ' \t\r\n' < VERSION)
           name=ArcadeLauncher-Sunshine-$ver-win-x64
-          # BUILD_TESTS=OFF: the test suite isn't shipped and its heavy TUs
-          # (nvhttp/video/stream) used to OOM the runner. VM 111 now has 16 GB,
-          # so -j 8 is a safe speed-up (the heavy TUs are BUILD_TESTS-gated off).
-          cmake -B build/sunshine -G Ninja -S vendor/sunshine -DCMAKE_BUILD_TYPE=Release -DBUILD_DOCS=OFF -DBUILD_TESTS=OFF -DSUNSHINE_ENABLE_TRAY=OFF
-          # Sunshine's web UI bundles @codecov/vite-plugin, which on GITHUB_ACTIONS
-          # attempts a tokenless upload and exits non-zero on the 400 (no codecov
-          # repo / token), failing the build. Unset GITHUB_ACTIONS/CI so the plugin
-          # falls back to its Local provider and skips the upload. The Linux leg is
-          # already immune (podman doesn't pass host env into the container).
-          env -u GITHUB_ACTIONS -u CI cmake --build build/sunshine -j 8
-          exe=$(find build/sunshine -name sunshine.exe | head -1)
-          test -n "$exe"
-          mkdir -p "$name"; cp "$exe" "$name/"
-          ntldd -R "$exe" | grep -oiE '/ucrt64/bin/[^ ]+\.dll' | sort -u | while read -r d; do cp "$d" "$name/" 2>/dev/null || true; done
-          cp LICENSE README.md "$name/" 2>/dev/null || true
-          (cd "$name" && zip -r "../$name.zip" .)
+          rm -f "$name.zip"
+          ( cd sun-extract/Sunshine && zip -rq "../../$name.zip" . )
+          zip -sf "$name.zip" | grep -qE '^\s*sunshine\.exe$'      # sunshine.exe at root
+          zip -sf "$name.zip" | grep -qE 'assets/web/index\.html$' # web UI bundled
           ls -la "$name.zip"
 
       - name: Publish Sunshine host asset
