@@ -175,6 +175,18 @@ static void test_launch_args() {
   CHECK(build_launch_args("").empty(), "no apps path -> no args");
 }
 
+// Sunshine must be spawned FROM its binary's own directory so it finds its relative `assets/`
+// (shaders etc.); otherwise it aborts with "Platform failed to initialize" before serving GameStream,
+// the host never mints cert.pem, and clients see not_paired. sunshine_work_dir is that directory.
+static void test_sunshine_work_dir() {
+  const std::filesystem::path bin =
+      std::filesystem::path("/opt/engine/host-engine/0.3.7") / "sunshine";
+  CHECK(sunshine_work_dir(bin.string()) ==
+            std::filesystem::path("/opt/engine/host-engine/0.3.7").string(),
+        "work dir is the binary's parent (where assets/ lives)");
+  CHECK(sunshine_work_dir("").empty(), "no binary -> no work dir (don't override CWD)");
+}
+
 // Only the system Sunshine path our resolver tries on *this* platform "exists".
 static bool only_system(const std::string& p) {
   const std::string n =
@@ -271,6 +283,7 @@ int main() {
   test_diff();
   test_resolve_binary();
   test_launch_args();
+  test_sunshine_work_dir();
   test_host_launch_command();
   test_system_sunshine();
   test_trust_client_from_empty();

@@ -37,6 +37,15 @@ std::string host_pkey_path(const std::string& appsPath);   // pkey — Sunshine'
 // sunshine binary shipped alongside the engine.
 std::string current_exe_dir();
 
+// The working directory Sunshine must run from: the directory containing its binary. Sunshine
+// resolves its `assets/` (notably `assets/shaders/directx/*.hlsl`) RELATIVE to the current working
+// directory, so if we spawn it with the engine's CWD inherited, shader compilation fails
+// (0x80070003 PATH_NOT_FOUND) → "Platform failed to initialize" → Sunshine aborts before minting
+// its server cert or serving GameStream. Spawning with this as the child CWD makes the bundled
+// portable layout (sunshine.exe beside its assets/) resolve correctly, exactly as double-clicking
+// sunshine.exe from its folder would. "" when `binary` has no parent (don't override the CWD then).
+std::string sunshine_work_dir(const std::string& binary);
+
 // Locates and drives the bundled Sunshine fork binary as a managed child process.
 class SunshineBackend {
  public:

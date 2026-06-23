@@ -102,6 +102,11 @@ std::string current_exe_dir() {
   return pos == std::string::npos ? "" : p.substr(0, pos);
 }
 
+std::string sunshine_work_dir(const std::string& binary) {
+  if (binary.empty()) return "";
+  return std::filesystem::path(binary).parent_path().string();
+}
+
 SunshineBackend::SunshineBackend(std::string appsPath) : appsPath_(std::move(appsPath)) {
   const char* env = std::getenv("ARCADE_SUNSHINE");
   binary_ = resolve_sunshine_binary(current_exe_dir(), env ? env : "", fs_exists);
@@ -152,6 +157,9 @@ bool SunshineBackend::start(std::string& msg) {
     return false;
   }
   const std::vector<std::string> args = build_launch_args(appsPath_);
+  // Run Sunshine FROM its own directory so it finds its relative `assets/` (shaders etc.). Inheriting
+  // the engine's CWD makes shader compilation fail and Sunshine abort before it serves GameStream.
+  const std::string workDir = sunshine_work_dir(binary_);
 #ifdef _WIN32
   std::string cmd = "\"" + binary_ + "\"";
   for (const auto& a : args) cmd += " " + a;
@@ -163,7 +171,7 @@ bool SunshineBackend::start(std::string& msg) {
   // CREATE_NO_WINDOW: Sunshine is a console subsystem binary; without this it
   // pops a console window in the foreground every time the host engine starts it.
   if (!CreateProcessA(nullptr, mutableCmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
-                      nullptr, &si, &pi)) {
+                      workDir.empty() ? nullptr : workDir.c_str(), &si, &pi)) {
     msg = "CreateProcess failed (err " + std::to_string(GetLastError()) + ")";
     return false;
   }
@@ -177,7 +185,10 @@ bool SunshineBackend::start(std::string& msg) {
     return false;
   }
   if (pid == 0) {
-    // Child: exec the bundled sunshine.
+    // Child: cd into Sunshine's own dir so it finds its relative `assets/`, then exec it.
+    if (!workDir.empty()) {
+      if (chdir(workDir.c_str()) != 0) { /* best-effort; exec still proceeds from inherited CWD */ }
+    }
     std::vector<char*> argv;
     argv.push_back(const_cast<char*>(binary_.c_str()));
     for (const auto& a : args) argv.push_back(const_cast<char*>(a.c_str()));
