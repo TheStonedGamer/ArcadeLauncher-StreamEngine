@@ -56,22 +56,26 @@ class SunshineBackend {
   SunshineBackend(const SunshineBackend&) = delete;
   SunshineBackend& operator=(const SunshineBackend&) = delete;
 
-  // Path to the resolved sunshine binary (bundled sidecar OR a system install), "" if none found.
+  // Path to the resolved engine-managed sunshine binary (env-override sidecar OR the copy shipped
+  // beside the engine), "" if none found. Never a system-installed Sunshine.
   const std::string& binary_path() const { return binary_; }
-  // True when a startable Sunshine binary is available (so the launcher needn't download one).
+  // True when a startable engine-managed Sunshine binary is available (so the launcher needn't
+  // download its sidecar).
   bool bundled() const { return !binary_.empty(); }
 
   // Whether the managed child is currently running (we started it and it hasn't exited). This is
   // the "managed" axis — true only for a Sunshine WE spawned, which is the only one we may stop.
   bool running();
 
-  // Whether a Sunshine host is active on this machine at all: our managed child OR an instance we
-  // adopt (one the user already had running). `running()` short-circuits the live port probe.
+  // Whether a Sunshine host is active on this machine: our managed child only. We do NOT adopt a
+  // foreign Sunshine that merely happens to be listening — it would serve a cert the client never
+  // pinned. Equivalent to running(); kept as a named seam for the host.* handlers.
   bool host_active();
 
-  // Start hosting (idempotent). If our child already runs, or another Sunshine is already
-  // listening, succeeds without spawning (we adopt the existing one rather than fight for its
-  // ports). Otherwise spawns the resolved binary. False if nothing is available to start (msg set).
+  // Start hosting (idempotent). If our child already runs, succeeds without spawning. Otherwise
+  // spawns the resolved engine-managed binary; if a foreign Sunshine already holds the GameStream
+  // ports the spawn fails to bind (honest error) rather than silently adopting it. False if no
+  // binary is available to start (msg set).
   bool start(std::string& msg);
   // Stop the managed child (idempotent — true once it is not running).
   bool stop(std::string& msg);

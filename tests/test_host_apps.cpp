@@ -13,7 +13,6 @@
 #include "host/client_trust.h"
 #include "host/host_apps.h"
 #include "host/sunshine_backend.h"
-#include "host/sunshine_detect.h"
 #include "ipc/json.h"
 
 using namespace ase::host;
@@ -187,30 +186,6 @@ static void test_sunshine_work_dir() {
   CHECK(sunshine_work_dir("").empty(), "no binary -> no work dir (don't override CWD)");
 }
 
-// Only the system Sunshine path our resolver tries on *this* platform "exists".
-static bool only_system(const std::string& p) {
-  const std::string n =
-#ifdef _WIN32
-      "\\Sunshine\\sunshine.exe";
-#else
-      "/sunshine";
-#endif
-  return p.size() >= n.size() && p.compare(p.size() - n.size(), n.size(), n) == 0;
-}
-
-static void test_system_sunshine() {
-  // The candidate list is non-empty on every platform (env-derived dirs + well-known prefixes),
-  // and every entry points at a Sunshine binary.
-  const auto candidates = system_sunshine_candidates();
-  CHECK(!candidates.empty(), "system candidates are enumerated");
-  for (const auto& c : candidates) {
-    CHECK(c.find("sunshine") != std::string::npos, "candidate names the sunshine binary");
-  }
-  // Resolution picks the first existing candidate, and reports none when nothing is on disk.
-  CHECK(!resolve_system_sunshine(only_system).empty(), "finds a system Sunshine when one exists");
-  CHECK(resolve_system_sunshine(never).empty(), "no system Sunshine -> empty");
-}
-
 static void test_host_launch_command() {
   // A real exe path (no scheme) and the desktop placeholder pass through untouched.
   CHECK(host_launch_command("C:/Games/halo.exe") == "C:/Games/halo.exe", "exe path unchanged");
@@ -285,7 +260,6 @@ int main() {
   test_launch_args();
   test_sunshine_work_dir();
   test_host_launch_command();
-  test_system_sunshine();
   test_trust_client_from_empty();
   test_trust_client_idempotent();
   test_trust_client_appends_and_preserves();

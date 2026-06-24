@@ -92,17 +92,17 @@ static Value app_to_json(const host::HostApp& a) {
 
 static void register_host_methods(ipc::Server& s, std::shared_ptr<host::SunshineBackend> backend) {
   // host.status -> capability/state snapshot.
-  //   installed = a Sunshine is available to host (bundled/system binary OR one already running) →
-  //               the launcher needn't download its sidecar.
-  //   running   = a Sunshine host is active (our child OR an adopted external instance).
-  //   managed   = WE started the active host (so we can stop it). `running && !managed` ⇒ the user's
-  //               own Sunshine, which we adopt but never stop — the UI shows it as external.
+  //   installed = an engine-managed Sunshine binary is available to host (env-override sidecar OR the
+  //               copy beside the engine) → the launcher needn't download its sidecar.
+  //   running   = our managed Sunshine host child is active.
+  //   managed   = WE started the active host (so we can stop it). Always equal to `running` now that
+  //               we never adopt a foreign Sunshine; kept for the launcher's status contract.
   s.on("host.status", [backend](const Value&, std::string&, std::string&) {
     const auto apps = host::read_apps(backend->apps_path());
     const bool managed = backend->running();
     const bool active = backend->host_active();
     Value r = Value::object();
-    r.set("installed", Value::boolean(backend->bundled() || active));
+    r.set("installed", Value::boolean(backend->bundled()));
     r.set("running", Value::boolean(active));
     r.set("managed", Value::boolean(managed));
     r.set("configured", Value::boolean(!apps.empty()));
@@ -111,15 +111,15 @@ static void register_host_methods(ipc::Server& s, std::shared_ptr<host::Sunshine
     return r;
   });
 
-  // host.enable {on} -> start/stop hosting. start() adopts an already-running Sunshine; stop() only
-  // ends our own managed child (an adopted external instance keeps running).
+  // host.enable {on} -> start/stop hosting. start() spawns our engine-managed Sunshine (it never
+  // adopts a foreign instance); stop() ends that managed child.
   s.on("host.enable", [backend](const Value& params, std::string& code, std::string& msg) {
     const bool on = params.get_bool("on", false);
     bool ok = on ? backend->start(msg) : backend->stop(msg);
     if (!ok) {
-      // "internal" only if we actually had something to start (a binary, or a live instance);
-      // otherwise it's genuinely not installed and the launcher should fetch the sidecar.
-      code = (backend->bundled() || backend->host_active()) ? "internal" : "not_installed";
+      // "internal" only if we actually had a binary to start; otherwise it's genuinely not installed
+      // and the launcher should fetch the sidecar.
+      code = backend->bundled() ? "internal" : "not_installed";
       return Value::null();
     }
     Value r = Value::object();

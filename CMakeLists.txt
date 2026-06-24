@@ -38,7 +38,6 @@ add_executable(arcade-stream-engine
   src/host/host_main.cpp
   src/host/host_apps.cpp          # Sunshine apps.json model (host.syncApps/listApps) — always built
   src/host/sunshine_backend.cpp   # drives the bundled Sunshine child (host.enable/status)
-  src/host/sunshine_detect.cpp    # detect/adopt a system-installed or already-running Sunshine
   src/host/client_trust.cpp       # seed account client certs into Sunshine state (zero-PIN auto-pair)
   src/client/stream_main.cpp
   src/client/stream_config.cpp
@@ -212,7 +211,6 @@ if(ASE_BUILD_TESTS)
     tests/test_host_apps.cpp
     src/host/host_apps.cpp
     src/host/sunshine_backend.cpp
-    src/host/sunshine_detect.cpp
     src/host/client_trust.cpp
     src/ipc/json.cpp
   )
